@@ -1,0 +1,58 @@
+CHECKLIST CẢI THIỆN ỨNG DỤNG KIDDO SOCIAL
+
+1. Flutter FE người dùng
+- Chuẩn hóa toàn bộ text tiếng Việt có dấu, tránh lẫn English/Vietnamese không dấu.
+- Xóa dữ liệu mock trên Home, đặc biệt friends/groups/challenge hardcode.
+- Nối FriendProfileScreen vào API thật: xem profile thật, gửi/hủy lời mời kết bạn, mở chat thật.
+- Lưu token đăng nhập bền vững bằng secure storage, không chỉ giữ trong RAM.
+- Làm video preview/playback thật thay vì chỉ hiện icon Video.
+- Kiểm tra UI trên màn hình nhỏ, đặc biệt nút LLM và bottom navigation.
+
+2. Backend người dùng
+- Khóa socket realtime: bắt buộc token hợp lệ và kiểm tra user có quyền join chat/post room.
+- Áp dụng block/friendship đồng bộ vào chat, search, feed và profile.
+- Chỉ cho chat trực tiếp giữa bạn bè nếu app định hướng mạng xã hội trẻ em an toàn.
+- Thêm API xóa bạn bè, hủy lời mời, outgoing requests, read receipt, typing indicator, online/offline.
+- Thêm pagination/filter cho feed, comment, chat, notification.
+- Thêm test tự động cho auth, posts, comments, chats, media, moderation.
+
+3. Kiểm duyệt nội dung
+- Đưa sensitive words từ file moderation/sensitiveWords.js vào DB để admin quản lý.
+- Thêm admin CRUD cho từ cấm, nhóm từ cấm, mức độ nghiêm trọng.
+- Fix encoding/mojibake trong message tiếng Việt.
+- Thêm test false-positive/false-negative cho bộ lọc từ ngữ.
+- Quét thêm displayName, bio, group name, notification broadcast, assistant input/output nếu cần.
+- Thêm kiểm duyệt ảnh/video bằng AI trước khi upload lên Cloudinary.
+
+4. Cloudinary/media
+- Kiểm duyệt ảnh/video trước khi lưu hoặc attach vào post/comment/chat/profile.
+- Thêm trạng thái REVIEW/APPROVED/REMOVED thật cho media thay vì auto APPROVED.
+- Cho admin xem lý do media bị chặn, nhãn AI, confidence và frame video bị phát hiện.
+- Không cho gửi media nếu AI service báo unsafe.
+
+5. React Admin FE
+- Bỏ demo login trước khi production.
+- Không fallback mock âm thầm khi API lỗi; phải hiện trạng thái lỗi rõ ràng.
+- Làm responsive, hiện tại CSS đặt min-width 1180px.
+- Bổ sung màn quản lý comment thật, badge CRUD thật, sensitive words CRUD.
+- Thêm confirm dialog cho hành động nguy hiểm: suspend, delete, remove media.
+- Thêm loading/error/toast chuẩn cho mọi action.
+
+6. BE Admin
+- Thêm pagination/search/filter cho mọi danh sách admin.
+- Risk scoring admin nên dùng cùng moderation engine thật, không chỉ regex đơn giản.
+- Broadcast notification nên emit realtime tới user đang online.
+- Safety config phải thật sự điều khiển moderation engine.
+- Badge admin cần CRUD rule thật, không chỉ thống kê.
+- Audit log nên lưu metadata chi tiết hơn cho các hành động nguy hiểm.
+
+7. Bảo mật/vận hành
+- Đặt JWT_SECRET mạnh, không dùng fallback khi production.
+- Rotate lại mọi secret đã từng gửi trong chat.
+- Rate limit riêng cho login, reset password, upload media, assistant.
+- Cấu hình CORS cụ thể, không dùng wildcard khi deploy.
+- Thêm logging/monitoring và backup MongoDB.
+- Không commit model AI lớn, .env, secret, file build/node_modules.
+
+Sau đó hãy chỉnh cho tôi là nhận avatar ở mọi nơi vì khi tôi vào post detail thì lại không thấy avatar của tôi mà lại hiển thị là avatar cơ bản. Và chỉnh lại cho tôi là sau khi tôi đăng bài nó vẫn ở lại post detail chứ không phải trả lại về trang home. 
+Sau khi đã làm xong những việc đó hãy kiểm tra giúp tôi nút đăng bài ~publish với đăng bài friend đã được áp dụng hãy chưa nếu chưa hãy code và làm phần này hoạt động giúp tôi. Nếu đăng bài chỉ để cho friend xem thì ở bài post đăng lên sẽ có hình ảnh con người để biết đó là đăng bài dành cho bạn bè

@@ -1,0 +1,48 @@
+TAI KHOAN CO NHIEU BAN BE DE TEST
+
+Ten hien thi: Amy Art
+Username: kid_amy
+Password: Kiddo123!
+So ban be: 10
+
+DANH SACH BAN BE
+
+1. Username: kid_emma
+   Ten hien thi: Emma Echo
+   Tuoi: 9
+
+2. Username: kid_gia
+   Ten hien thi: Gia Game
+   Tuoi: 10
+
+3. Username: kid_ken
+   Ten hien thi: Ken Quest
+   Tuoi: 13
+
+4. Username: kid_lina
+   Ten hien thi: Lina Leaf
+   Tuoi: 9
+
+5. Username: kid_max
+   Ten hien thi: Max Marble
+   Tuoi: 11
+
+6. Username: kid_nina
+   Ten hien thi: Nina Nature
+   Tuoi: 10
+
+7. Username: kid_oscar
+   Ten hien thi: Oscar Orbit
+   Tuoi: 13
+
+8. Username: kid_sam
+   Ten hien thi: Sam Spark
+   Tuoi: 11
+
+9. Username: kid_tom
+   Ten hien thi: Tom Tempo
+   Tuoi: 12
+
+10. Username: kid_vinh
+    Ten hien thi: Vinh Vega
+    Tuoi: 12

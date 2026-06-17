@@ -1,0 +1,21 @@
+cd D:\Doan\Doan\ai
+.\.venv\Scripts\Activate.ps1
+uvicorn server:app --host 127.0.0.1 --port 8001
+
+
+
+cd D:\Doan\Doan\be
+npm run dev
+
+cd "D:\Doan\Doan\fe admin"
+npm run dev
+
+admin / admin123456
+
+cd D:\Doan\Doan\fe
+flutter run
+
+& "$env:LOCALAPPDATA\Android\Sdk\emulator\emulator.exe" -avd Pixel_7
+
+Và ở các bài post và cả tin nhắn và thông báo hãy hiển thị cả thời gian và ngày. Nếu đang trong ngày thì chỉ hiển thị giờ còn nếu đã qua ngày thì hãy hiển thị thêm cả ngày nữa
+

@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+ai/*.h5
+ai/*.keras
+ai/__pycache__/
+ai/.venv/
+*.pyc
+*.log
