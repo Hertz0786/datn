@@ -62,8 +62,12 @@ class PostReactionUser {
   final DateTime? reactedAt;
 
   factory PostReactionUser.fromJson(Map<String, dynamic> json) {
+    final dynamic userData = json['user'];
+    final Map<String, dynamic> userMap = userData is Map<String, dynamic>
+        ? userData
+        : <String, dynamic>{};
     return PostReactionUser(
-      user: PublicUser.fromJson(_readMap(json['user'])),
+      user: PublicUser.fromJson(userMap),
       reaction: (json['reaction'] ?? '').toString(),
       reactedAt: DateTime.tryParse((json['reactedAt'] ?? '').toString()),
     );
@@ -78,6 +82,10 @@ class PostsApi {
   final ApiClient _api = ApiClient.instance;
 
   static const int _defaultPageSize = 50;
+
+  Future<void> sharePost(String postId) async {
+    await _api.post('/api/posts/$postId/share');
+  }
 
   Future<FeedPage> feed({
     String? q,
@@ -316,16 +324,12 @@ class PostsApi {
   }
 
   Map<String, dynamic> _toMap(dynamic value) {
-    return _readMap(value);
+    if (value is Map<String, dynamic>) {
+      return value;
+    }
+    if (value is Map) {
+      return value.map((key, dynamic item) => MapEntry(key.toString(), item));
+    }
+    return <String, dynamic>{};
   }
-}
-
-Map<String, dynamic> _readMap(dynamic value) {
-  if (value is Map<String, dynamic>) {
-    return value;
-  }
-  if (value is Map) {
-    return value.map((key, dynamic item) => MapEntry(key.toString(), item));
-  }
-  return <String, dynamic>{};
 }

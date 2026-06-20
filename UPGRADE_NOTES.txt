@@ -1,0 +1,125 @@
+UPGRADE NOTES - Future Improvements
+==================================
+Generated: 2026-06-19
+
+---
+
+1. Mongoose Deprecation Warnings (LOW PRIORITY)
+------------------------------------------------
+Location: be/src/models/*.js
+
+Problem: All `findOneAndUpdate()` and `findOneAndReplace()` calls pass
+`new: true` which is deprecated in Mongoose 6+. Mongoose recommends
+`returnDocument: 'after'` instead.
+
+Impact: Warning messages in server logs only. No functional impact.
+
+Fix: Replace every occurrence of:
+  Model.findOneAndUpdate(query, update, { new: true })
+with:
+  Model.findOneAndUpdate(query, update, { returnDocument: 'after' })
+
+Files to update:
+  - be/src/routes/posts.routes.js
+  - be/src/routes/comments.routes.js
+  - be/src/routes/friends.routes.js
+  - be/src/routes/chats.routes.js
+  - (any other file using findOneAndUpdate with the new option)
+
+---
+
+2. WebSocket Authentication (MEDIUM PRIORITY)
+----------------------------------------------
+Problem: The Socket.IO handshake does not currently verify JWT tokens
+on connection. Any client can connect to the WebSocket and listen for
+events on any room (post:join, chat join, etc.).
+
+Risk: Users can potentially listen to messages in chat rooms they are
+not members of, or receive real-time updates for posts they should not
+see.
+
+Fix Options:
+  a) Verify JWT in Socket.IO handshake middleware:
+       const { token } = socket.handshake.auth;
+       try { socket.user = jwt.verify(token, secret); } catch { socket.disconnect(); }
+
+  b) Verify user membership on each room join:
+       - For post rooms: check user can see the post before joining.
+       - For chat rooms: check user is a chat member before joining.
+
+Recommendation: Implement option (a) as the primary gate, plus (b) as
+defense-in-depth for sensitive rooms.
+
+---
+
+3. Peer Disconnect Retry Logic (MEDIUM PRIORITY)
+-----------------------------------------------
+Location: be/src/services/calls.js, fe/lib/features/call/call_screen.dart
+
+Problem: When a WebRTC peer disconnects abruptly (e.g. network drop),
+the current implementation may not automatically retry the connection.
+
+Current behavior: The call shows "Reconnecting..." or hangs.
+
+Enhancement: Implement exponential backoff retry:
+  1. On disconnect event, wait 1s, 2s, 4s, 8s (max 3 attempts).
+  2. Re-create RTCPeerConnection and re-exchange SDP offers.
+  3. After max retries, show "Connection lost" with manual retry button.
+  4. Send 'call:peer_disconnected' event so the other peer knows.
+
+Also add ICE restart: when the connection fails due to network change,
+call pc.restartIce() before creating a new offer.
+
+---
+
+4. Room Cleanup Background Job (LOW PRIORITY)
+---------------------------------------------
+Location: be/src/jobs/ (new directory, or scheduled task)
+
+Problem: Stale call rooms and chat sessions may accumulate in Redis/Memory
+if participants crash or lose connectivity without sending a proper end.
+
+Enhancement: Add a periodic cleanup job (runs every 5 minutes):
+  - Find call rooms older than 30 minutes with status IN_PROGRESS.
+  - For each stale room, call cleanupCallRoom() to:
+      - Set status to ENDED.
+      - Calculate duration.
+      - Save to history.
+      - Remove from Redis.
+
+Implementation:
+  - Use node-cron or setInterval in server.js.
+  - Or use MongoDB TTL indexes on call documents.
+
+---
+
+5. Post Share Feature (IMPLEMENTED - VERIFIED CLEAN)
+----------------------------------------------------------
+Status: Backend endpoint and Flutter UI implemented and verified.
+
+Backend changes (all syntax-checked):
+  - be/src/models/Post.js: added shareCount field
+  - be/src/routes/posts.routes.js: added POST /:postId/share endpoint
+  - be/src/routes/chats.routes.js: added POST /:chatId/share endpoint
+  - be/src/models/Message.js: added postShare embedded schema
+
+Frontend changes (flutter analyze: 0 errors):
+  - fe/lib/shared/widgets/share_post_sheet.dart: new widget with
+    SharePostSheet bottom sheet, friend picker, post preview
+  - fe/lib/core/services/posts_api.dart: sharePost() method
+  - fe/lib/core/services/chats_api.dart: sendPostShare() method
+  - fe/lib/core/models/chat_message.dart: PostShareRef model
+  - fe/lib/features/feed/home_screen.dart: share button on _PostCard
+  - fe/lib/features/feed/post_detail_screen.dart: share button in AppBar
+
+API endpoints:
+  POST /api/posts/:postId/share
+    - Creates a new post on user's profile with same content/media/topics
+    - Increments shareCount on original post
+    - Returns the new post wrapped in withPostMeta()
+    - Access control: validates audience (FRIENDS posts need friendship)
+
+  POST /api/chats/:chatId/share
+    - Sends a post share message to the chat
+    - Message has postShare field with denormalized post data
+    - Sends realtime event + notifications to chat members

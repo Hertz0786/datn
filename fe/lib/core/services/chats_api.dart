@@ -150,6 +150,16 @@ class ChatsApi {
     return ChatMessage.fromJson(_toMap(data['data']));
   }
 
+  Future<void> sendPostShare({
+    required String chatId,
+    required String postId,
+  }) async {
+    await _api.post(
+      '/api/chats/$chatId/messages',
+      body: <String, dynamic>{'postId': postId},
+    );
+  }
+
   Map<String, dynamic> _toMap(dynamic value) {
     if (value is Map<String, dynamic>) {
       return value;

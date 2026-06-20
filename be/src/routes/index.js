@@ -16,6 +16,7 @@ const mediaRoutes = require('./media.routes');
 const assistantRoutes = require('./assistant.routes');
 const supportRoutes = require('./support.routes');
 const adminRoutes = require('./admin.routes');
+const callRoutes = require('./calls.routes');
 
 const router = express.Router();
 
@@ -35,5 +36,6 @@ router.use('/media', mediaRoutes);
 router.use('/assistant', assistantRoutes);
 router.use('/support', supportRoutes);
 router.use('/admin', adminRoutes);
+router.use('/calls', callRoutes);
 
 module.exports = router;
