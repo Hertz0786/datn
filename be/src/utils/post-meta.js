@@ -16,7 +16,7 @@ async function withPostMeta(posts, userId) {
   const [reactions, bookmarks, authors] = await Promise.all([
     PostReaction.find({ postId: { $in: postIds } }),
     PostBookmark.find({ postId: { $in: postIds }, userId }).select('postId'),
-    User.find({ _id: { $in: authorIds } }).select(
+    User.find({ _id: { $in: authorIds }, isActive: true }).select(
       '_id displayName username avatarUrl role lastActiveAt',
     ),
   ]);

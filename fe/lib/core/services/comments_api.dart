@@ -58,10 +58,18 @@ class CommentsApi {
     required String postId,
     required String content,
     List<String> mediaUrls = const <String>[],
+    String voiceUrl = '',
   }) async {
+    final Map<String, dynamic> body = <String, dynamic>{
+      'content': content,
+      'mediaUrls': mediaUrls,
+    };
+    if (voiceUrl.isNotEmpty) {
+      body['voiceUrl'] = voiceUrl;
+    }
     final dynamic response = await _api.post(
       '/api/comments/posts/$postId',
-      body: <String, dynamic>{'content': content, 'mediaUrls': mediaUrls},
+      body: body,
     );
 
     final Map<String, dynamic> data = _toMap(response);
@@ -72,10 +80,18 @@ class CommentsApi {
     required String commentId,
     required String content,
     List<String> mediaUrls = const <String>[],
+    String voiceUrl = '',
   }) async {
+    final Map<String, dynamic> body = <String, dynamic>{
+      'content': content,
+      'mediaUrls': mediaUrls,
+    };
+    if (voiceUrl.isNotEmpty) {
+      body['voiceUrl'] = voiceUrl;
+    }
     final dynamic response = await _api.post(
       '/api/comments/$commentId/replies',
-      body: <String, dynamic>{'content': content, 'mediaUrls': mediaUrls},
+      body: body,
     );
 
     final Map<String, dynamic> data = _toMap(response);

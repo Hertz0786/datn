@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
 import '../../app/app_shell.dart';
+import '../../core/config/app_config.dart';
 import '../../core/network/api_exception.dart';
 import '../../core/services/auth_api.dart';
 import '../../core/constants/app_images.dart';
@@ -19,6 +21,11 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _passwordController = TextEditingController();
 
   bool _isSubmitting = false;
+
+  final GoogleSignIn _googleSignIn = GoogleSignIn(
+    clientId: AppConfig.googleClientId.isNotEmpty ? AppConfig.googleClientId : null,
+    serverClientId: null,
+  );
 
   @override
   void dispose() {
@@ -75,6 +82,63 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  Future<void> _signInWithGoogle() async {
+    setState(() => _isSubmitting = true);
+
+    try {
+      final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
+
+      if (googleUser == null) {
+        if (mounted) {
+          setState(() => _isSubmitting = false);
+        }
+        return;
+      }
+
+      final GoogleSignInAuthentication googleAuth =
+          await googleUser.authentication;
+
+      final String? idToken = googleAuth.idToken;
+      if (idToken == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Could not get Google ID token.')),
+          );
+          setState(() => _isSubmitting = false);
+        }
+        return;
+      }
+
+      await AuthApi.instance.googleLogin(idToken: idToken);
+
+      if (!mounted) {
+        return;
+      }
+
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const AppShell()),
+        (_) => false,
+      );
+    } on ApiException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Google sign-in failed: $error')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     const backgroundStart = Color(0xFFFFF3C4);
@@ -122,8 +186,8 @@ class _LoginScreenState extends State<LoginScreen> {
                 const SizedBox(height: 22),
                 _InputField(
                   controller: _usernameController,
-                  label: 'Username',
-                  hint: 'kiddo_hero',
+                  label: 'Username or Email',
+                  hint: 'kiddo_hero or email@example.com',
                   icon: Icons.badge_outlined,
                   color: primary,
                 ),
@@ -181,6 +245,8 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                         ),
                 ),
+                const SizedBox(height: 12),
+                _GoogleSignInButton(onPressed: _signInWithGoogle),
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
                   onPressed: _isSubmitting
@@ -250,6 +316,51 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _GoogleSignInButton extends StatelessWidget {
+  const _GoogleSignInButton({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton(
+      onPressed: onPressed,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: const Color(0xFF1A3D7C),
+        side: const BorderSide(color: Color(0xFFE0E0E0), width: 1.5),
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          SizedBox(
+            width: 20,
+            height: 20,
+            child: Image.network(
+              'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg',
+              errorBuilder: (_, __, ___) => const Icon(
+                Icons.g_mobiledata,
+                size: 22,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          const Text(
+            'Continue with Google',
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
       ),
     );
   }

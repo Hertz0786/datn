@@ -97,10 +97,16 @@ router.post(
     });
 
     if (reversePending) {
-      await Friendship.create({
-        userAId: pair.userAId,
-        userBId: pair.userBId,
-      });
+      // Defensively handle the unlikely race where another request
+      // created the friendship between the check and now.  Silently
+      // ignore duplicate-key errors — the friendship already exists.
+      const existing = await Friendship.findOne(pair);
+      if (!existing) {
+        await Friendship.create({
+          userAId: pair.userAId,
+          userBId: pair.userBId,
+        });
+      }
       reversePending.status = 'ACCEPTED';
       await reversePending.save();
 
@@ -146,7 +152,7 @@ router.post(
       },
       {
         upsert: true,
-        new: true,
+        returnNewDocument: true,
         runValidators: true,
       },
     );
@@ -476,8 +482,18 @@ router.patch(
     }
 
     const request = await FriendRequest.findById(requestId);
-    if (!request || request.status !== 'PENDING') {
-      return res.status(404).json({ message: 'Pending request not found.' });
+    if (!request) {
+      return res.status(404).json({ message: 'Friend request not found.' });
+    }
+
+    // Graceful: if request was already accepted/rejected/cancelled, treat as success
+    // instead of 404. This prevents "pending not found" errors when the request
+    // was auto-accepted or handled by another action.
+    if (request.status !== 'PENDING') {
+      return res.json({
+        message: `Friend request already ${request.status.toLowerCase()}.`,
+        status: request.status,
+      });
     }
 
     const isReceiver = request.receiverId.toString() === req.user.id;
@@ -500,7 +516,7 @@ router.patch(
       await Friendship.findOneAndUpdate(
         pair,
         { $set: pair },
-        { upsert: true, new: true, setDefaultsOnInsert: true },
+        { upsert: true, returnNewDocument: true, setDefaultsOnInsert: true },
       );
 
       request.status = 'ACCEPTED';

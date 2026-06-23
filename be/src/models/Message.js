@@ -24,6 +24,16 @@ const messageSchema = new mongoose.Schema(
       type: [String],
       default: [],
     },
+    type: {
+      type: String,
+      enum: ['TEXT', 'POST_SHARE'],
+      default: 'TEXT',
+    },
+    postId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Post',
+      default: null,
+    },
     status: {
       type: String,
       enum: ['SENT', 'DELETED'],

@@ -208,14 +208,23 @@ class _FriendListScreenState extends State<FriendListScreen> {
         requestId: request.id,
         action: 'accept',
       );
-      await _loadData();
     } on ApiException catch (error) {
       if (!mounted) {
+        await _loadData();
         return;
       }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error.message)));
+      final String msg = error.message.toLowerCase();
+      if (msg.contains('already')) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Friend request already accepted.')),
+        );
+      } else {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+      await _loadData();
+      return;
     } catch (error) {
       if (!mounted) {
         return;
@@ -223,7 +232,9 @@ class _FriendListScreenState extends State<FriendListScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Accept request failed: $error')));
+      return;
     }
+    await _loadData();
   }
 
   Future<void> _rejectRequest(FriendRequestItem request) async {
@@ -232,14 +243,23 @@ class _FriendListScreenState extends State<FriendListScreen> {
         requestId: request.id,
         action: 'reject',
       );
-      await _loadData();
     } on ApiException catch (error) {
       if (!mounted) {
+        await _loadData();
         return;
       }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error.message)));
+      final String msg = error.message.toLowerCase();
+      if (msg.contains('already')) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Friend request already processed.')),
+        );
+      } else {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+      await _loadData();
+      return;
     } catch (error) {
       if (!mounted) {
         return;
@@ -247,7 +267,9 @@ class _FriendListScreenState extends State<FriendListScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Reject request failed: $error')));
+      return;
     }
+    await _loadData();
   }
 
   Future<void> _openChat(PublicUser user) async {

@@ -18,6 +18,10 @@ const userSchema = new mongoose.Schema(
       maxlength: 24,
       match: /^[a-z0-9_]+$/,
     },
+    birthDate: {
+      type: Date,
+      required: true,
+    },
     age: {
       type: Number,
       required: true,
@@ -26,7 +30,7 @@ const userSchema = new mongoose.Schema(
     },
     passwordHash: {
       type: String,
-      required: true,
+      default: null,
     },
     role: {
       type: String,
@@ -69,6 +73,28 @@ const userSchema = new mongoose.Schema(
       type: Date,
       default: null,
       index: true,
+    },
+    email: {
+      type: String,
+      default: null,
+      lowercase: true,
+      trim: true,
+      maxlength: 254,
+      sparse: true,
+    },
+    emailVerified: {
+      type: Boolean,
+      default: false,
+    },
+    googleId: {
+      type: String,
+      default: null,
+      sparse: true,
+    },
+    loginProvider: {
+      type: String,
+      enum: ['LOCAL', 'GOOGLE'],
+      default: 'LOCAL',
     },
   },
   { timestamps: true },

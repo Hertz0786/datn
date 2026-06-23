@@ -96,7 +96,7 @@ async function main() {
     update.passwordHash = await bcrypt.hash(password, 10);
   }
 
-  const user = await User.findByIdAndUpdate(existing._id, { $set: update }, { new: true });
+  const user = await User.findByIdAndUpdate(existing._id, { $set: update }, { returnDocument: 'after' });
 
   console.log(`Updated user: ${user.username} (id=${user._id}) -> role=${user.role}`);
 

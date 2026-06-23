@@ -24,8 +24,12 @@ class CallActionButtons extends StatefulWidget {
 class _CallActionButtonsState extends State<CallActionButtons> {
   bool _busy = false;
 
+  bool get _canCall =>
+      widget.calleeId.isNotEmpty &&
+      widget.allowedCallTypes.any((t) => t == 'voice' || t == 'video');
+
   Future<void> _startCall(String callType) async {
-    if (_busy) return;
+    if (_busy || !_canCall) return;
     setState(() => _busy = true);
     try {
       await CallService.instance.startOutgoingCall(
@@ -51,6 +55,7 @@ class _CallActionButtonsState extends State<CallActionButtons> {
     if (!showVoice && !showVideo) {
       return const SizedBox.shrink();
     }
+    final bool enabled = _canCall && !_busy;
     if (widget.compact) {
       return Row(
         mainAxisSize: MainAxisSize.min,
@@ -59,14 +64,14 @@ class _CallActionButtonsState extends State<CallActionButtons> {
             IconButton(
               icon: const Icon(Icons.call),
               color: const Color(0xFF22C55E),
-              onPressed: _busy ? null : () => _startCall('voice'),
+              onPressed: enabled ? () => _startCall('voice') : null,
               tooltip: 'Voice call',
             ),
           if (showVideo)
             IconButton(
               icon: const Icon(Icons.videocam),
               color: const Color(0xFF3B82F6),
-              onPressed: _busy ? null : () => _startCall('video'),
+              onPressed: enabled ? () => _startCall('video') : null,
               tooltip: 'Video call',
             ),
         ],
@@ -77,7 +82,7 @@ class _CallActionButtonsState extends State<CallActionButtons> {
         if (showVoice)
           Expanded(
             child: FilledButton.icon(
-              onPressed: _busy ? null : () => _startCall('voice'),
+              onPressed: enabled ? () => _startCall('voice') : null,
               icon: const Icon(Icons.call),
               label: const Text('Voice'),
               style: FilledButton.styleFrom(
@@ -90,7 +95,7 @@ class _CallActionButtonsState extends State<CallActionButtons> {
         if (showVideo)
           Expanded(
             child: FilledButton.icon(
-              onPressed: _busy ? null : () => _startCall('video'),
+              onPressed: enabled ? () => _startCall('video') : null,
               icon: const Icon(Icons.videocam),
               label: const Text('Video'),
               style: FilledButton.styleFrom(
@@ -116,8 +121,14 @@ class CallPrimaryButton extends StatelessWidget {
   final String calleeId;
   final List<String> allowedCallTypes;
 
+  bool get _canCall =>
+      calleeId.isNotEmpty &&
+      allowedCallTypes.any((t) => t == 'voice' || t == 'video');
+
   @override
   Widget build(BuildContext context) {
+    if (!_canCall) return const SizedBox.shrink();
+
     final bool canVideo = allowedCallTypes.contains('video');
     final String type = canVideo ? 'video' : 'voice';
     final IconData icon = canVideo ? Icons.videocam : Icons.call;

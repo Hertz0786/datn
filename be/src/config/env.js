@@ -5,6 +5,11 @@ dotenv.config();
 const nodeEnv = process.env.NODE_ENV || 'development';
 const isProduction = nodeEnv === 'production';
 
+function parsePositiveInt(val, fallback) {
+  const n = Number(val);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 if (isProduction && !process.env.JWT_SECRET) {
   throw new Error('Missing JWT_SECRET in production environment.');
 }
@@ -32,13 +37,20 @@ const env = {
   aiModerationEnabled:
     process.env.AI_MODERATION_ENABLED === 'true' || !!process.env.AI_MODERATION_URL,
   aiModerationFailOpen: process.env.AI_MODERATION_FAIL_OPEN === 'true',
-  aiModerationTimeoutMs: Number(process.env.AI_MODERATION_TIMEOUT_MS || 60000),
+  aiModerationTimeoutMs: parsePositiveInt(process.env.AI_MODERATION_TIMEOUT_MS, 60000),
+  agora: {
+    appId: process.env.AGORA_APP_ID || '',
+    appCertificate: process.env.AGORA_APP_CERTIFICATE || '',
+    appCertificateSecondary: process.env.AGORA_APP_CERTIFICATE2nd || '',
+    tokenExpireSeconds: parsePositiveInt(process.env.AGORA_TOKEN_EXPIRE_SECONDS, 3600),
+  },
   // Threshold for auto-publishing a post with image attachments. The
   // AI moderation service returns an `unsafeScore` in [0, 1]; a score
   // at or above this value requires admin review before the post is
   // visible on the feed. Tunable per environment.
-  mediaModerationThreshold: Number(
-    process.env.MEDIA_MODERATION_THRESHOLD || 0.65,
+  mediaModerationThreshold: parsePositiveInt(
+    process.env.MEDIA_MODERATION_THRESHOLD,
+    0.65,
   ),
 };
 

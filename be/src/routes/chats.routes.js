@@ -253,7 +253,7 @@ router.patch(
     const updated = await Chat.findByIdAndUpdate(
       chatId,
       { $set: update },
-      { new: true, runValidators: true },
+      { returnNewDocument: true, runValidators: true },
     );
     const [summary] = await buildChatSummaries([updated], req.user.id);
     return res.json({ message: 'Group chat updated.', chat: summary });
@@ -291,7 +291,7 @@ router.post(
     const updated = await Chat.findByIdAndUpdate(
       chatId,
       { $addToSet: { memberIds: { $each: memberIds } } },
-      { new: true, runValidators: true },
+      { returnNewDocument: true, runValidators: true },
     );
 
     // Notify every newly added member that they've been included.
@@ -359,7 +359,7 @@ router.delete(
     const updated = await Chat.findByIdAndUpdate(
       chatId,
       { $set: update },
-      { new: true, runValidators: true },
+      { returnNewDocument: true, runValidators: true },
     );
 
     const remover = await User.findById(req.user.id).select(
@@ -409,9 +409,36 @@ router.get(
       return res.status(403).json({ message });
     }
 
-    const messages = await Message.find({ chatId, status: 'SENT' }).sort({ createdAt: 1 });
-    const items = messages.map(serializeMessage);
-    return res.json({ items });
+    const limit = Math.min(
+      Math.max(1, parseInt(req.query.limit, 10) || 50),
+      200,
+    );
+    const beforeRaw = String(req.query.before || '').trim();
+    const beforeDate = beforeRaw ? new Date(beforeRaw) : null;
+    if (beforeRaw && Number.isNaN(beforeDate.getTime())) {
+      return res.status(400).json({ message: 'Invalid before cursor.' });
+    }
+
+    const query = { chatId, status: 'SENT' };
+    if (beforeDate) {
+      query.createdAt = { $lt: beforeDate };
+    }
+
+    const messages = await Message.find(query)
+      .sort({ createdAt: -1 })
+      .limit(limit + 1);
+
+    const hasMore = messages.length > limit;
+    const page = hasMore ? messages.slice(0, limit) : messages;
+    const nextBefore =
+      hasMore && page.length > 0
+        ? page[page.length - 1].createdAt.toISOString()
+        : null;
+
+    // Messages are returned newest-first so the UI can prepend older messages
+    // as the user scrolls up.
+    const items = page.reverse().map(serializeMessage);
+    return res.json({ items, hasMore, nextBefore });
   }),
 );
 
@@ -419,15 +446,15 @@ router.post(
   '/:chatId/messages',
   asyncHandler(async (req, res) => {
     const { chatId } = req.params;
-    const { content = '' } = req.body;
+    const { content = '', postId = null } = req.body;
     const mediaUrls = readMediaUrls(req.body.mediaUrls);
     const cleanContent = String(content).trim();
 
     if (!isValidObjectId(chatId)) {
       return res.status(400).json({ message: 'Invalid chatId.' });
     }
-    if (!cleanContent && mediaUrls.length === 0) {
-      return res.status(400).json({ message: 'content or mediaUrls is required.' });
+    if (!cleanContent && mediaUrls.length === 0 && !postId) {
+      return res.status(400).json({ message: 'content, mediaUrls, or postId is required.' });
     }
 
     const chat = await Chat.findOne({ _id: chatId, memberIds: req.user.id });
@@ -452,11 +479,15 @@ router.post(
       });
     }
 
+    const messageType = postId ? 'POST_SHARE' : 'TEXT';
+
     const message = await Message.create({
       chatId,
       senderId: req.user.id,
       content: cleanContent,
       mediaUrls,
+      type: messageType,
+      postId: postId || undefined,
       status: 'SENT',
     });
 

@@ -23,53 +23,78 @@ class AuthApi {
     return _storeSessionFromAuthResponse(response);
   }
 
+  Future<void> sendVerificationCode({required String email}) async {
+    await _api.post(
+      '/api/auth/send-verification',
+      authRequired: false,
+      body: <String, dynamic>{'email': email},
+    );
+  }
+
   Future<PublicUser> register({
     required String displayName,
     required String username,
-    required int age,
+    required DateTime birthDate,
     required String password,
+    String? email,
+    String? verificationCode,
     List<String> favoriteTopics = const <String>[],
   }) async {
+    final Map<String, dynamic> body = <String, dynamic>{
+      'displayName': displayName,
+      'username': username,
+      'birthDate': birthDate.toIso8601String(),
+      'password': password,
+      'favoriteTopics': favoriteTopics,
+    };
+    if (email != null && email.isNotEmpty) {
+      body['email'] = email;
+    }
+    if (verificationCode != null && verificationCode.isNotEmpty) {
+      body['verificationCode'] = verificationCode;
+    }
+
     final dynamic response = await _api.post(
       '/api/auth/register',
       authRequired: false,
-      body: <String, dynamic>{
-        'displayName': displayName,
-        'username': username,
-        'age': age,
-        'password': password,
-        'favoriteTopics': favoriteTopics,
-      },
+      body: body,
     );
 
     return _storeSessionFromAuthResponse(response);
   }
 
-  Future<String?> requestPasswordReset({required String username}) async {
-    final dynamic response = await _api.post(
+  Future<void> sendPasswordResetCode({required String email}) async {
+    await _api.post(
       '/api/auth/password/forgot',
       authRequired: false,
-      body: <String, dynamic>{'username': username},
+      body: <String, dynamic>{'email': email},
     );
-    final Map<String, dynamic> data = _toMap(response);
-    final dynamic resetToken = data['resetToken'];
-    return resetToken?.toString();
   }
 
   Future<void> resetPassword({
-    required String username,
-    required String token,
+    required String email,
+    required String code,
     required String password,
   }) async {
     await _api.post(
       '/api/auth/password/reset',
       authRequired: false,
       body: <String, dynamic>{
-        'username': username,
-        'token': token,
+        'email': email,
+        'code': code,
         'password': password,
       },
     );
+  }
+
+  Future<PublicUser> googleLogin({required String idToken}) async {
+    final dynamic response = await _api.post(
+      '/api/auth/google',
+      authRequired: false,
+      body: <String, dynamic>{'idToken': idToken},
+    );
+
+    return _storeSessionFromAuthResponse(response);
   }
 
   Future<PublicUser> getMe() async {

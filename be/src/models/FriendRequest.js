@@ -24,7 +24,18 @@ const friendRequestSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
+friendRequestSchema.pre('validate', function (next) {
+  if (this.senderId.toString() === this.receiverId.toString()) {
+    this.invalidate('receiverId', 'Cannot send a friend request to yourself.');
+  }
+  next();
+});
+
 friendRequestSchema.index({ senderId: 1, receiverId: 1 }, { unique: true });
+friendRequestSchema.index(
+  { senderId: 1, receiverId: 1, status: 1 },
+  { unique: true, partialFilterExpression: { status: 'PENDING' } },
+);
 
 module.exports = mongoose.model('FriendRequest', friendRequestSchema);
 

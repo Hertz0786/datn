@@ -200,7 +200,7 @@ router.post(
     const updatedPost = await Post.findByIdAndUpdate(
       postId,
       { $inc: { commentCount: 1 } },
-      { new: true },
+      { returnNewDocument: true },
     );
 
     emitToPost(postId, 'comment:created', {
@@ -299,7 +299,7 @@ router.post(
     const updatedPost = await Post.findByIdAndUpdate(
       parent.postId,
       { $inc: { commentCount: 1 } },
-      { new: true },
+      { returnNewDocument: true },
     );
 
     emitToPost(parent.postId.toString(), 'comment:created', {
@@ -394,22 +394,36 @@ router.post(
     let liked;
     let updated;
 
+    // Atomic operations: use findOneAndDelete to avoid race between
+    // checking existence and writing.
     if (existing) {
-      await CommentReaction.deleteOne({ _id: existing._id });
-      updated = await Comment.findByIdAndUpdate(
+      const deleted = await CommentReaction.findOneAndDelete({
+        _id: existing._id,
         commentId,
-        { $inc: { likeCount: -1 } },
-        { new: true },
-      );
-      if (updated.likeCount < 0) {
-        updated.likeCount = 0;
-        await updated.save();
+        userId: req.user.id,
+      });
+      if (deleted) {
+        updated = await Comment.findByIdAndUpdate(
+          commentId,
+          { $inc: { likeCount: -1 } },
+          { returnNewDocument: true },
+        );
+        if (updated && updated.likeCount < 0) {
+          updated.likeCount = 0;
+          await updated.save();
+        }
+      } else {
+        updated = await Comment.findById(commentId);
       }
       liked = false;
     } else {
       let createdReaction = false;
       try {
-        await CommentReaction.create({ commentId, userId: req.user.id });
+        await CommentReaction.create({
+          commentId,
+          userId: req.user.id,
+          reaction: 'heart',
+        });
         createdReaction = true;
       } catch (error) {
         if (error.code !== 11000) {
@@ -420,7 +434,7 @@ router.post(
         ? await Comment.findByIdAndUpdate(
             commentId,
             { $inc: { likeCount: 1 } },
-            { new: true },
+            { returnNewDocument: true },
           )
         : await Comment.findById(commentId);
       liked = true;
@@ -581,7 +595,7 @@ router.delete(
     const updatedPost = await Post.findOneAndUpdate(
       { _id: comment.postId, commentCount: { $gt: 0 } },
       { $inc: { commentCount: -1 } },
-      { new: true },
+      { returnNewDocument: true },
     );
 
     emitToPost(comment.postId.toString(), 'comment:deleted', {

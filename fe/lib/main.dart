@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import 'app/app_shell.dart';
 import 'app/app_theme.dart';
 import 'core/session/auth_session.dart';
+import 'features/call/screens/call_screen.dart';
+import 'features/call/screens/outgoing_call_screen.dart';
 import 'features/onboarding/onboarding_flow_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await dotenv.load(fileName: '.env', isOptional: true);
   await AuthSession.instance.restore();
   runApp(const MyApp());
 }
@@ -33,6 +37,10 @@ class MyApp extends StatelessWidget {
           darkTheme: AppTheme.dark,
           themeMode: ThemeMode.system,
           home: home,
+          routes: {
+            '/call/active': (_) => const CallScreen(),
+            '/call/outgoing': (_) => const OutgoingCallScreen(),
+          },
         );
       },
     );

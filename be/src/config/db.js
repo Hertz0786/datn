@@ -9,6 +9,7 @@ async function connectDB() {
   }
 
   const hasPlaceholder = PASSWORD_PLACEHOLDER_REGEX.test(env.mongoUri);
+  PASSWORD_PLACEHOLDER_REGEX.lastIndex = 0; // reset after test so replace() starts from 0
   const mongoUri = hasPlaceholder
     ? env.mongoUri.replace(
         PASSWORD_PLACEHOLDER_REGEX,

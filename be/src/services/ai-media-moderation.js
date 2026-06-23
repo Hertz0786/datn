@@ -75,6 +75,63 @@ async function postMediaToAiServer(file) {
   }
 }
 
+async function transcribeMedia(file) {
+  const baseUrl = normalizeBaseUrl(env.aiModerationUrl);
+  if (!baseUrl) {
+    throw createHttpError(503, 'AI_MODERATION_URL is not configured.');
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    env.aiModerationTimeoutMs,
+  );
+  timeout.unref?.();
+
+  try {
+    const form = new FormData();
+    const blob = new Blob([file.buffer], {
+      type: file.mimetype || 'audio/mpeg',
+    });
+    form.append('file', blob, file.originalname || 'audio.mp3');
+    form.append('language', 'vi');
+
+    const response = await fetch(`${baseUrl}/transcribe-moderate`, {
+      method: 'POST',
+      body: form,
+      signal: controller.signal,
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw createHttpError(
+        response.status >= 500 ? 502 : response.status,
+        payload.detail || 'Transcription failed.',
+        payload,
+      );
+    }
+
+    return {
+      text: payload.text || '',
+      language: payload.language || 'vi',
+      segments: payload.segments || [],
+      moderation: payload.moderation || {
+        isFlagged: false,
+        decision: 'APPROVED',
+        flaggedKeywords: [],
+        unsafeScore: 0,
+      },
+    };
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw createHttpError(504, 'Transcription timed out.');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function assertMediaAllowed(file) {
   if (!env.aiModerationEnabled) {
     return buildModerationSnapshot(null, 'AI moderation is disabled.');
@@ -94,6 +151,13 @@ async function assertMediaAllowed(file) {
     const moderation = await postMediaToAiServer(file);
     if (moderation.decision === 'SKIPPED') {
       return moderation;
+    }
+
+    if (moderation.decision === 'BLOCKED') {
+      throw createHttpError(400, 'Media content was blocked by the moderation system.', {
+        code: 'MEDIA_BLOCKED',
+        ...moderation,
+      });
     }
 
     return moderation;
@@ -119,4 +183,5 @@ async function assertMediaAllowed(file) {
 
 module.exports = {
   assertMediaAllowed,
+  transcribeMedia,
 };

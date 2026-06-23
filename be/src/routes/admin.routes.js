@@ -631,8 +631,8 @@ function describeFlaggedTarget(flag, lookups) {
 function serializeSupportMessage(message) {
   return {
     id: message._id.toString(),
-    threadId: message.threadId.toString(),
-    senderId: message.senderId.toString(),
+    threadId: message.threadId?.toString() || '',
+    senderId: message.senderId?.toString() || '',
     senderRole: message.senderRole,
     content: message.content,
     createdAt: message.createdAt,
@@ -793,7 +793,7 @@ router.patch(
           isActive: status !== 'SUSPENDED',
         },
       },
-      { new: true },
+      { returnNewDocument: true },
     );
     if (!user) {
       return res.status(404).json({ message: 'User not found.' });
@@ -877,7 +877,7 @@ router.patch(
           moderationDecisionNote: note,
         },
       },
-      { new: true },
+      { returnNewDocument: true },
     );
     if (!post) {
       return res.status(404).json({ message: 'Post not found.' });
@@ -991,7 +991,7 @@ router.patch(
     const comment = await Comment.findByIdAndUpdate(
       commentId,
       { $set: { status } },
-      { new: true },
+      { returnNewDocument: true },
     );
     if (!comment) {
       return res.status(404).json({ message: 'Comment not found.' });
@@ -1164,7 +1164,7 @@ router.patch(
       return res.status(400).json({ message: 'Invalid report status.' });
     }
 
-    const report = await Report.findByIdAndUpdate(reportId, { $set: { status } }, { new: true });
+    const report = await Report.findByIdAndUpdate(reportId, { $set: { status } }, { returnNewDocument: true });
     if (!report) {
       return res.status(404).json({ message: 'Report not found.' });
     }
@@ -1228,7 +1228,7 @@ router.patch(
       return res.status(400).json({ message: 'Invalid group status.' });
     }
 
-    const group = await Group.findByIdAndUpdate(groupId, { $set: { status } }, { new: true });
+    const group = await Group.findByIdAndUpdate(groupId, { $set: { status } }, { returnNewDocument: true });
     if (!group) {
       return res.status(404).json({ message: 'Group not found.' });
     }
@@ -1278,7 +1278,7 @@ router.patch(
     const message = await Message.findByIdAndUpdate(
       messageId,
       { $set: { status: status === 'REMOVED' || status === 'DELETED' ? 'DELETED' : 'SENT' } },
-      { new: true },
+      { returnNewDocument: true },
     );
     if (!message) {
       return res.status(404).json({ message: 'Message not found.' });
@@ -1407,7 +1407,9 @@ router.get(
       })),
     });
   }),
-);router.patch(
+);
+
+router.patch(
   '/flags/:flagId',
   asyncHandler(async (req, res) => {
     const { flagId } = req.params;
@@ -1526,7 +1528,7 @@ router.patch(
     await AppSetting.findOneAndUpdate(
       { key: 'safety_config' },
       { $set: { key: 'safety_config', value } },
-      { upsert: true, new: true },
+      { upsert: true, returnNewDocument: true },
     );
     await logAdminAction(req, 'Updated safety configuration', 'SAFETY', 'safety_config');
     return res.json({ message: 'Safety settings updated.', data: value });
@@ -1666,7 +1668,7 @@ router.patch(
           assignedAdminId: req.user.id,
         },
       },
-      { new: true },
+      { returnNewDocument: true },
     );
     if (!thread) {
       return res.status(404).json({ message: 'Support thread not found.' });

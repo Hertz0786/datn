@@ -258,9 +258,18 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error.message)));
+      final String msg = error.message.toLowerCase();
+      if (msg.contains('already')) {
+        _showSnackBar(
+          _friendshipStatus?.isIncomingPending == true
+              ? 'Friend request already accepted.'
+              : 'Friend request already processed.',
+        );
+      } else {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
       await _loadFriendshipStatus(showLoading: false);
     } catch (error) {
       if (!mounted) {

@@ -181,7 +181,7 @@ router.patch(
     const report = await Report.findByIdAndUpdate(
       reportId,
       { $set: { status } },
-      { new: true, runValidators: true },
+      { returnNewDocument: true, runValidators: true },
     );
     if (!report) {
       return res.status(404).json({ message: 'Report not found.' });

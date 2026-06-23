@@ -55,7 +55,7 @@ router.patch(
     const user = await User.findByIdAndUpdate(
       req.user.id,
       { $set: update },
-      { new: true, runValidators: true },
+      { returnNewDocument: true, runValidators: true },
     );
 
     if (!user) {
@@ -159,7 +159,7 @@ router.post(
     await Block.findOneAndUpdate(
       { blockerId: req.user.id, blockedId: userId },
       { $set: { blockerId: req.user.id, blockedId: userId } },
-      { upsert: true, new: true },
+      { upsert: true, returnNewDocument: true },
     );
 
     const blocker = await User.findById(req.user.id).select(
@@ -198,7 +198,7 @@ router.delete(
       blockedId: userId,
     });
 
-    if (removed && removed.deletedCount > 0) {
+    if (removed.deletedCount > 0) {
       const unblocker = await User.findById(req.user.id).select(
         'displayName username avatarUrl',
       );

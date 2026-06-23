@@ -65,14 +65,31 @@ async function getOrCreateSocialGroupChat(group) {
   });
 
   if (!chat) {
-    return Chat.create({
-      type: 'SOCIAL_GROUP',
-      groupId: group._id,
-      title: group.name,
-      avatarUrl: group.avatarUrl || '',
-      memberIds,
-      createdBy: group.ownerId,
-    });
+    // Handle the race: two concurrent requests may both try to create
+    // the chat. The unique index on { type, groupId } will reject the
+    // second insert with code 11000. In that case, fetch the existing
+    // row and continue to the update path below.
+    try {
+      return await Chat.create({
+        type: 'SOCIAL_GROUP',
+        groupId: group._id,
+        title: group.name,
+        avatarUrl: group.avatarUrl || '',
+        memberIds,
+        createdBy: group.ownerId,
+      });
+    } catch (error) {
+      if (error.code !== 11000) {
+        throw error;
+      }
+      chat = await Chat.findOne({
+        type: 'SOCIAL_GROUP',
+        groupId: group._id,
+      });
+      if (!chat) {
+        throw error;
+      }
+    }
   }
 
   const update = {};
@@ -93,7 +110,7 @@ async function getOrCreateSocialGroupChat(group) {
   return Chat.findByIdAndUpdate(
     chat._id,
     { $set: update },
-    { new: true, runValidators: true },
+      { returnNewDocument: true, runValidators: true },
   );
 }
 
@@ -390,19 +407,22 @@ router.delete(
     }
 
     const session = await mongoose.startSession();
-    await session.withTransaction(async () => {
-      await GroupMember.updateOne(
-        { _id: member._id },
-        { $set: { status: 'LEFT' } },
-        { session },
-      );
-      await Group.updateOne(
-        { _id: groupId, memberCount: { $gt: 1 } },
-        { $inc: { memberCount: -1 } },
-        { session },
-      );
-    });
-    session.endSession();
+    try {
+      await session.withTransaction(async () => {
+        await GroupMember.updateOne(
+          { _id: member._id },
+          { $set: { status: 'LEFT' } },
+          { session },
+        );
+        await Group.updateOne(
+          { _id: groupId, memberCount: { $gt: 1 } },
+          { $inc: { memberCount: -1 } },
+          { session },
+        );
+      });
+    } finally {
+      await session.endSession();
+    }
 
     await Chat.updateOne(
       { type: 'SOCIAL_GROUP', groupId },
@@ -488,7 +508,7 @@ router.patch(
     const member = await GroupMember.findOneAndUpdate(
       { groupId, userId, status: 'PENDING' },
       { $set: { status: nextStatus, role: 'MEMBER' } },
-      { new: true, runValidators: true },
+      { returnNewDocument: true, runValidators: true },
     );
 
     if (!member) {
@@ -680,7 +700,7 @@ router.post(
             role: 'MEMBER',
           },
         },
-        { upsert: true, new: true, runValidators: true, session },
+        { upsert: true, returnNewDocument: true, runValidators: true, session },
       );
       shouldNotifyOwner = true;
     });
@@ -745,19 +765,22 @@ router.post(
     }
 
     const session = await mongoose.startSession();
-    await session.withTransaction(async () => {
-      await GroupMember.updateOne(
-        { _id: member._id },
-        { $set: { status: 'LEFT' } },
-        { session },
-      );
-      await Group.updateOne(
-        { _id: groupId, memberCount: { $gt: 0 } },
-        { $inc: { memberCount: -1 } },
-        { session },
-      );
-    });
-    session.endSession();
+    try {
+      await session.withTransaction(async () => {
+        await GroupMember.updateOne(
+          { _id: member._id },
+          { $set: { status: 'LEFT' } },
+          { session },
+        );
+        await Group.updateOne(
+          { _id: groupId, memberCount: { $gt: 0 } },
+          { $inc: { memberCount: -1 } },
+          { session },
+        );
+      });
+    } finally {
+      await session.endSession();
+    }
 
     await Chat.updateOne(
       { type: 'SOCIAL_GROUP', groupId },

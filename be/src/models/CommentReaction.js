@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { ALLOWED_REACTIONS } = require('./PostReaction');
 
 const commentReactionSchema = new mongoose.Schema(
   {
@@ -13,6 +14,12 @@ const commentReactionSchema = new mongoose.Schema(
       ref: 'User',
       required: true,
       index: true,
+    },
+    reaction: {
+      type: String,
+      enum: ALLOWED_REACTIONS,
+      default: 'heart',
+      required: true,
     },
   },
   { timestamps: true },

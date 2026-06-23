@@ -18,6 +18,7 @@ import '../../shared/widgets/media_preview_grid.dart';
 import '../../shared/widgets/post_audience_badge.dart';
 import '../../shared/widgets/report_sheet.dart';
 import '../../shared/widgets/section_header.dart';
+import '../../shared/widgets/share_post_sheet.dart';
 import '../../shared/widgets/skeleton_views.dart';
 import '../../shared/widgets/user_avatar.dart';
 import '../friends/friend_list_screen.dart';
@@ -692,6 +693,10 @@ class _HomeScreenState extends State<HomeScreen> {
     ).showSnackBar(const SnackBar(content: Text('Thanks! We will review it.')));
   }
 
+  Future<void> _sharePost(FeedPost post) async {
+    await showSharePostSheet(context: context, post: post);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1107,6 +1112,7 @@ class _HomeScreenState extends State<HomeScreen> {
             onLike: (reaction) => _togglePostLike(post, reaction: reaction),
             onBookmark: () => _togglePostBookmark(post),
             onReport: () => _reportPost(post),
+            onShare: () => _sharePost(post),
             onTap: () => _openPost(post),
             onAuthorTap: () => _openPostAuthor(post),
           );
@@ -1234,6 +1240,7 @@ class _PostCard extends StatelessWidget {
     required this.onAuthorTap,
     required this.onBookmark,
     required this.onReport,
+    required this.onShare,
     required this.isBookmarkPending,
   });
 
@@ -1243,6 +1250,7 @@ class _PostCard extends StatelessWidget {
   final void Function(String reaction) onLike;
   final VoidCallback onBookmark;
   final VoidCallback onReport;
+  final VoidCallback onShare;
   final VoidCallback onTap;
   final VoidCallback onAuthorTap;
 
@@ -1349,6 +1357,15 @@ class _PostCard extends StatelessWidget {
                   onPressed: onReport,
                   icon: const Icon(
                     Icons.flag_outlined,
+                    color: Color(0xFF7A8BBF),
+                    size: 20,
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Share',
+                  onPressed: onShare,
+                  icon: const Icon(
+                    Icons.share_rounded,
                     color: Color(0xFF7A8BBF),
                     size: 20,
                   ),

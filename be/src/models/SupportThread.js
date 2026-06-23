@@ -34,7 +34,7 @@ const supportThreadSchema = new mongoose.Schema(
     },
     lastMessageAt: {
       type: Date,
-      default: Date.now,
+      default: () => new Date(),
       index: true,
     },
   },

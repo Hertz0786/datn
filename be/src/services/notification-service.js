@@ -243,12 +243,18 @@ const DEFAULT_COPY = {
  * Replace ${token} placeholders in a template string with values
  * from the supplied context. Missing tokens stay literal so a
  * template never breaks at runtime.
+ *
+ * Uses a function replacement so the ${...} pattern is treated as a
+ * literal string — it is NOT evaluated as a JS template-literal
+ * expression.  This prevents ${id} or ${n} in user content from
+ * accidentally triggering expression evaluation.
  */
 function renderTemplate(template, context) {
   if (typeof template !== 'string') {
     return template;
   }
-  return template.replace(/\$\{(\w+)\}/g, (match, key) => {
+  return template.replace(/\$\{(\w+)\}/g, (match) => {
+    const key = match.slice(2, -1); // strip ${ and }
     if (Object.prototype.hasOwnProperty.call(context, key)) {
       return String(context[key]);
     }

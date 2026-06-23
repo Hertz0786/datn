@@ -14,6 +14,18 @@ class ChatsPage {
   final bool hasMore;
 }
 
+class MessagesPage {
+  const MessagesPage({
+    required this.items,
+    required this.nextBefore,
+    required this.hasMore,
+  });
+
+  final List<ChatMessage> items;
+  final String? nextBefore;
+  final bool hasMore;
+}
+
 class ChatsApi {
   ChatsApi._();
 
@@ -125,25 +137,47 @@ class ChatsApi {
     return ChatSummary.fromJson(_toMap(data['chat']));
   }
 
-  Future<List<ChatMessage>> listMessages(String chatId) async {
-    final dynamic response = await _api.get('/api/chats/$chatId/messages');
-    final List<dynamic> items =
-        _toMap(response)['items'] as List<dynamic>? ?? const [];
-
-    return items
+  Future<MessagesPage> listMessages(
+    String chatId, {
+    int limit = 50,
+    String? before,
+  }) async {
+    final Map<String, dynamic> query = <String, dynamic>{'limit': limit};
+    if (before != null && before.isNotEmpty) {
+      query['before'] = before;
+    }
+    final dynamic response = await _api.get(
+      '/api/chats/$chatId/messages',
+      query: query,
+    );
+    final Map<String, dynamic> data = _toMap(response);
+    final List<ChatMessage> items = (data['items'] as List<dynamic>? ?? const [])
         .whereType<Map<String, dynamic>>()
         .map(ChatMessage.fromJson)
         .toList();
+    return MessagesPage(
+      items: items,
+      hasMore: data['hasMore'] == true,
+      nextBefore: data['nextBefore']?.toString(),
+    );
   }
 
   Future<ChatMessage> sendMessage({
     required String chatId,
     required String content,
     List<String> mediaUrls = const <String>[],
+    String voiceUrl = '',
   }) async {
+    final Map<String, dynamic> body = <String, dynamic>{
+      'content': content,
+      'mediaUrls': mediaUrls,
+    };
+    if (voiceUrl.isNotEmpty) {
+      body['voiceUrl'] = voiceUrl;
+    }
     final dynamic response = await _api.post(
       '/api/chats/$chatId/messages',
-      body: <String, dynamic>{'content': content, 'mediaUrls': mediaUrls},
+      body: body,
     );
 
     final Map<String, dynamic> data = _toMap(response);

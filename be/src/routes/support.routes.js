@@ -203,9 +203,10 @@ router.patch(
       isActive: true,
     }).select('_id');
     if (admins.length > 0) {
-      await broadcastNotification({
-        userIds: admins.map((admin) => admin._id),
-        type: NOTIFICATION_TYPES.SUPPORT_STATUS_UPDATED,
+    await broadcastNotification({
+      userIds: admins.map((admin) => admin._id),
+      actorId: req.user.id,
+      type: NOTIFICATION_TYPES.SUPPORT_STATUS_UPDATED,
         payload: {
           threadId: thread._id.toString(),
           subject: thread.subject,

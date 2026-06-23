@@ -1,21 +1,27 @@
 import 'package:flutter/material.dart';
+import 'package:just_audio/just_audio.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../app/app_theme.dart';
 import '../../core/models/chat_message.dart';
 import '../../core/models/chat_summary.dart';
+import '../../core/models/feed_post.dart';
 import '../../core/models/media_asset.dart';
 import '../../core/models/public_user.dart';
 import '../../core/network/api_exception.dart';
 import '../../core/services/chats_api.dart';
 import '../../core/services/friends_api.dart';
 import '../../core/services/media_api.dart';
+import '../../core/services/posts_api.dart';
 import '../../core/services/realtime_service.dart';
 import '../../core/session/auth_session.dart';
 import '../../core/utils/date_time_formatter.dart';
+import '../../features/call/widgets/call_action_buttons.dart';
+import '../../features/feed/post_detail_screen.dart';
 import '../../shared/widgets/media_preview_grid.dart';
 import '../../shared/widgets/skeleton_views.dart';
 import '../../shared/widgets/user_avatar.dart';
+import '../../shared/widgets/voice_recorder_widget.dart';
 import 'sticker_picker_screen.dart';
 import 'moderation_alert_dialog.dart';
 
@@ -72,6 +78,13 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
   String get _myId => (AuthSession.instance.user?['id'] ?? '').toString();
 
+  String? get _otherParticipantId {
+    final List<PublicUser> others = _members
+        .where((user) => user.id != _myId)
+        .toList();
+    return others.isNotEmpty ? others.first.id : null;
+  }
+
   bool get _isGroupOwner =>
       widget.isGroup &&
       !widget.isSocialGroup &&
@@ -111,7 +124,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     setState(() => _isLoading = true);
 
     try {
-      final List<ChatMessage> items = await ChatsApi.instance.listMessages(
+      final MessagesPage page = await ChatsApi.instance.listMessages(
         widget.chatId!,
       );
 
@@ -119,7 +132,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         return;
       }
 
-      setState(() => _messages = items);
+      setState(() => _messages = page.items);
     } on ApiException catch (error) {
       if (!mounted) {
         return;
@@ -141,9 +154,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     }
   }
 
-  Future<void> _sendMessage() async {
+  Future<void> _sendMessage({String? voicePath}) async {
     final String content = _messageController.text.trim();
-    if ((content.isEmpty && _pickedMedia.isEmpty) || _isSending) {
+    if ((content.isEmpty && _pickedMedia.isEmpty && (voicePath == null || voicePath.isEmpty)) ||
+        _isSending) {
       return;
     }
 
@@ -166,10 +180,20 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
           .where((url) => url.isNotEmpty)
           .toList();
 
+      String? uploadedVoiceUrl;
+      if (voicePath != null && voicePath.isNotEmpty) {
+        final MediaAsset voiceAsset = await MediaApi.instance.upload(
+          filePath: voicePath,
+          sourceType: 'VOICE',
+        );
+        uploadedVoiceUrl = voiceAsset.url;
+      }
+
       final ChatMessage sent = await ChatsApi.instance.sendMessage(
         chatId: widget.chatId!,
         content: content,
         mediaUrls: mediaUrls,
+        voiceUrl: uploadedVoiceUrl ?? '',
       );
 
       for (final MediaAsset media in uploadedMedia) {
@@ -714,6 +738,11 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
           ],
         ),
         actions: [
+          if (!widget.isGroup)
+            CallActionButtons(
+              calleeId: _otherParticipantId ?? '',
+              compact: true,
+            ),
           if (widget.isGroup)
             IconButton(
               onPressed: _showGroupInfo,
@@ -824,6 +853,13 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                         ),
                       ),
                     ),
+                    const SizedBox(width: 4),
+                    VoiceRecorderWidget(
+                      compact: true,
+                      onRecorded: (path, _) {
+                        _sendMessage(voicePath: path);
+                      },
+                    ),
                     const SizedBox(width: 8),
                     CircleAvatar(
                       radius: 20,
@@ -929,6 +965,14 @@ class _Bubble extends StatelessWidget {
             ],
             if (message.content.isNotEmpty)
               _MessageContent(content: message.content, isMe: isMe),
+            if (message.voiceUrl.isNotEmpty) ...[
+              if (message.content.isNotEmpty) const SizedBox(height: 6),
+              _VoiceMessageBubble(voiceUrl: message.voiceUrl, isMe: isMe),
+            ],
+            if (message.isPostShare && message.postId != null) ...[
+              if (message.content.isNotEmpty) const SizedBox(height: 6),
+              _SharedPostCard(postId: message.postId!, isMe: isMe),
+            ],
             if (message.mediaUrls.isNotEmpty) ...[
               if (message.content.isNotEmpty) const SizedBox(height: 8),
               SizedBox(
@@ -1201,6 +1245,323 @@ class _MessageContent extends StatelessWidget {
     return Text(
       content,
       style: TextStyle(color: isMe ? Colors.white : context.appHeading),
+    );
+  }
+}
+
+class _VoiceMessageBubble extends StatefulWidget {
+  const _VoiceMessageBubble({required this.voiceUrl, required this.isMe});
+
+  final String voiceUrl;
+  final bool isMe;
+
+  @override
+  State<_VoiceMessageBubble> createState() => _VoiceMessageBubbleState();
+}
+
+class _VoiceMessageBubbleState extends State<_VoiceMessageBubble> {
+  final AudioPlayer _player = AudioPlayer();
+  bool _isPlaying = false;
+  bool _isLoading = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _player.playerStateStream.listen((state) {
+      if (!mounted) return;
+      setState(() {
+        _isPlaying = state.playing;
+      });
+      if (state.processingState == ProcessingState.completed) {
+        _player.seek(Duration.zero);
+        _player.pause();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _player.dispose();
+    super.dispose();
+  }
+
+  Future<void> _togglePlayPause() async {
+    if (_isLoading || _error != null) return;
+
+    if (_isPlaying) {
+      await _player.pause();
+    } else {
+      if (_player.audioSource != null) {
+        await _player.play();
+      } else {
+        setState(() {
+          _isLoading = true;
+          _error = null;
+        });
+        try {
+          await _player.setUrl(widget.voiceUrl);
+          await _player.play();
+        } catch (e) {
+          if (mounted) {
+            setState(() {
+              _error = 'Cannot play audio';
+            });
+          }
+        } finally {
+          if (mounted) {
+            setState(() {
+              _isLoading = false;
+            });
+          }
+        }
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final iconColor = widget.isMe ? const Color(0xFF33B8FF) : Colors.white;
+    final barColor = widget.isMe
+        ? Colors.white.withValues(alpha: 0.5)
+        : const Color(0xFF33B8FF).withValues(alpha: 0.3);
+    final activeBarColor = widget.isMe ? Colors.white : const Color(0xFF33B8FF);
+    final textColor = widget.isMe
+        ? Colors.white.withValues(alpha: 0.9)
+        : const Color(0xFF33B8FF);
+
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 220),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: widget.isMe
+            ? Colors.white.withValues(alpha: 0.25)
+            : const Color(0xFF33B8FF).withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: widget.isMe
+              ? Colors.white.withValues(alpha: 0.4)
+              : const Color(0xFF33B8FF).withValues(alpha: 0.25),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          GestureDetector(
+            onTap: _togglePlayPause,
+            child: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: widget.isMe ? Colors.white : const Color(0xFF33B8FF),
+                shape: BoxShape.circle,
+              ),
+              alignment: Alignment.center,
+              child: _isLoading
+                  ? SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: iconColor,
+                      ),
+                    )
+                  : Icon(
+                      _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                      size: 20,
+                      color: iconColor,
+                    ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  height: 3,
+                  decoration: BoxDecoration(
+                    color: barColor,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                  child: Row(
+                    children: [
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 500),
+                        width: _isPlaying ? 60 : 20,
+                        height: 3,
+                        decoration: BoxDecoration(
+                          color: activeBarColor,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _error ?? (_isPlaying ? 'Playing...' : 'Voice message'),
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: _error != null ? Colors.red.shade300 : textColor,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SharedPostCard extends StatefulWidget {
+  const _SharedPostCard({required this.postId, required this.isMe});
+
+  final String postId;
+  final bool isMe;
+
+  @override
+  State<_SharedPostCard> createState() => _SharedPostCardState();
+}
+
+class _SharedPostCardState extends State<_SharedPostCard> {
+  FeedPost? _post;
+  bool _isLoading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPost();
+  }
+
+  Future<void> _loadPost() async {
+    try {
+      final FeedPost post = await PostsApi.instance.getPost(widget.postId);
+      if (!mounted) return;
+      setState(() {
+        _post = post;
+        _isLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Failed to load post';
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final Color bgColor = widget.isMe
+        ? Colors.white.withValues(alpha: 0.25)
+        : const Color(0xFFEFF7FF);
+    final Color borderColor = widget.isMe
+        ? Colors.white.withValues(alpha: 0.4)
+        : const Color(0xFFD7E7FF);
+    final Color textColor = widget.isMe ? Colors.white : const Color(0xFF1A3D7C);
+    final Color subColor = widget.isMe
+        ? Colors.white.withValues(alpha: 0.8)
+        : const Color(0xFF7A8BBF);
+
+    return GestureDetector(
+      onTap: _post != null
+          ? () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => PostDetailScreen(initialPost: _post),
+                ),
+              );
+            }
+          : null,
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 240),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: bgColor,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: borderColor),
+        ),
+        child: _isLoading
+            ? Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Shared post...',
+                    style: TextStyle(fontSize: 12, color: subColor),
+                  ),
+                ],
+              )
+            : _error != null
+                ? Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.error_outline, size: 14, color: subColor),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Shared post',
+                        style: TextStyle(fontSize: 12, color: subColor),
+                      ),
+                    ],
+                  )
+                : Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.article_outlined, size: 18, color: textColor),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _post!.authorDisplayName.isNotEmpty
+                                  ? _post!.authorDisplayName
+                                  : _post!.authorUsername,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: textColor,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              _post!.content,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(fontSize: 12, color: subColor),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (_post!.mediaUrls.isNotEmpty) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(6),
+                            color: const Color(0xFFE8F4FF),
+                          ),
+                          child: const Icon(
+                            Icons.image_rounded,
+                            color: Color(0xFF33B8FF),
+                            size: 20,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+      ),
     );
   }
 }

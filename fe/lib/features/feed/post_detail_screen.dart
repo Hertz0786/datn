@@ -16,7 +16,9 @@ import '../../app/app_shell_navigator.dart';
 import '../../shared/widgets/media_preview_grid.dart';
 import '../../shared/widgets/post_audience_badge.dart';
 import '../../shared/widgets/report_sheet.dart';
+import '../../shared/widgets/share_post_sheet.dart';
 import '../../shared/widgets/user_avatar.dart';
+import '../../shared/widgets/voice_recorder_widget.dart';
 import '../friends/friend_profile_screen.dart';
 
 class PostDetailScreen extends StatefulWidget {
@@ -161,9 +163,10 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     }
   }
 
-  Future<void> _sendComment() async {
+  Future<void> _sendComment({String? voicePath}) async {
     final String message = _commentController.text.trim();
-    if ((message.isEmpty && _pickedCommentMedia.isEmpty) || _isSendingComment) {
+    if ((message.isEmpty && _pickedCommentMedia.isEmpty && (voicePath == null || voicePath.isEmpty)) ||
+        _isSendingComment) {
       return;
     }
     if (_post?.allowComments == false) {
@@ -188,17 +191,28 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
           .where((u) => u.isNotEmpty)
           .toList();
 
+      String? uploadedVoiceUrl;
+      if (voicePath != null && voicePath.isNotEmpty) {
+        final MediaAsset voiceAsset = await MediaApi.instance.upload(
+          filePath: voicePath,
+          sourceType: 'COMMENT_VOICE',
+        );
+        uploadedVoiceUrl = voiceAsset.url;
+      }
+
       if (_replyTargetCommentId != null) {
         await CommentsApi.instance.createReply(
           commentId: _replyTargetCommentId!,
           content: message,
           mediaUrls: mediaUrls,
+          voiceUrl: uploadedVoiceUrl ?? '',
         );
       } else {
         await CommentsApi.instance.createComment(
           postId: postId,
           content: message,
           mediaUrls: mediaUrls,
+          voiceUrl: uploadedVoiceUrl ?? '',
         );
       }
 
@@ -737,6 +751,14 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     ).showSnackBar(const SnackBar(content: Text('Thanks! We will review it.')));
   }
 
+  Future<void> _sharePost() async {
+    final FeedPost? post = _post;
+    if (post == null) {
+      return;
+    }
+    await showSharePostSheet(context: context, post: post);
+  }
+
   Future<void> _deletePost() async {
     final FeedPost? post = _post;
     if (post == null) {
@@ -1012,6 +1034,12 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
               tooltip: 'Report post',
               icon: const Icon(Icons.flag_outlined),
               onPressed: _reportPost,
+            ),
+          if (_post != null)
+            IconButton(
+              tooltip: 'Share',
+              icon: const Icon(Icons.share_rounded),
+              onPressed: _sharePost,
             ),
           if (_canEditPost)
             IconButton(
@@ -1893,6 +1921,12 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                 icon: const Icon(Icons.video_library_rounded),
                 color: const Color(0xFF7A5CFF),
               ),
+              VoiceRecorderWidget(
+                compact: true,
+                onRecorded: (path, _) {
+                  _sendComment(voicePath: path);
+                },
+              ),
               Expanded(
                 child: TextField(
                   controller: _commentController,
@@ -2321,6 +2355,10 @@ class _CommentCard extends StatelessWidget {
             const SizedBox(height: 8),
             MediaPreviewGrid(urls: comment.mediaUrls, compact: true),
           ],
+          if (comment.voiceUrl.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _CommentVoiceBubble(voiceUrl: comment.voiceUrl),
+          ],
           const SizedBox(height: 6),
           Row(
             children: [
@@ -2457,5 +2495,94 @@ class _CommentCard extends StatelessWidget {
     }
     return (parts.first.substring(0, 1) + parts.last.substring(0, 1))
         .toUpperCase();
+  }
+}
+
+class _CommentVoiceBubble extends StatefulWidget {
+  const _CommentVoiceBubble({required this.voiceUrl});
+
+  final String voiceUrl;
+
+  @override
+  State<_CommentVoiceBubble> createState() => _CommentVoiceBubbleState();
+}
+
+class _CommentVoiceBubbleState extends State<_CommentVoiceBubble> {
+  bool _isPlaying = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 220),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF33B8FF).withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: const Color(0xFF33B8FF).withValues(alpha: 0.25),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          GestureDetector(
+            onTap: () {
+              setState(() => _isPlaying = !_isPlaying);
+            },
+            child: Container(
+              width: 36,
+              height: 36,
+              decoration: const BoxDecoration(
+                color: Color(0xFF33B8FF),
+                shape: BoxShape.circle,
+              ),
+              alignment: Alignment.center,
+              child: Icon(
+                _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                size: 20,
+                color: Colors.white,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  height: 3,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF33B8FF).withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                  child: Row(
+                    children: [
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 500),
+                        width: _isPlaying ? 60 : 20,
+                        height: 3,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF33B8FF),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _isPlaying ? 'Playing...' : 'Voice message',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF33B8FF),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

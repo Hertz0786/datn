@@ -2,12 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../core/models/app_notification.dart';
 import '../core/models/chat_message.dart';
-import '../core/models/public_user.dart';
-import '../core/network/api_exception.dart';
-import '../core/services/friends_api.dart';
 import '../core/services/notifications_api.dart';
 import '../core/services/realtime_service.dart';
-import '../core/services/users_api.dart';
 import '../core/session/auth_session.dart';
 import 'app_shell_navigator.dart';
 import '../features/assistant/llm_assistant_button.dart';
@@ -30,7 +26,6 @@ class _AppShellState extends State<AppShell> {
   int _unreadNotifications = 0;
   int _notificationsRefreshSignal = 0;
   int _unreadChatMessages = 0;
-  bool _friendRequestDialogOpen = false;
 
   @override
   void initState() {
@@ -117,7 +112,7 @@ class _AppShellState extends State<AppShell> {
       Map<String, dynamic>.from(rawNotification),
     );
     if (notification.type == 'FRIEND_REQUEST_RECEIVED') {
-      _showFriendRequestDialog(notification);
+      // User responds to friend requests from the notifications tab.
     }
   }
 
@@ -211,91 +206,6 @@ class _AppShellState extends State<AppShell> {
     setState(() {
       _unreadNotifications = count;
     });
-  }
-
-  Future<void> _showFriendRequestDialog(AppNotification notification) async {
-    if (_friendRequestDialogOpen) {
-      return;
-    }
-
-    final String requestId = (notification.payload['requestId'] ?? '')
-        .toString();
-    final String fromUserId = (notification.payload['fromUserId'] ?? '')
-        .toString();
-    if (requestId.isEmpty || fromUserId.isEmpty) {
-      return;
-    }
-
-    _friendRequestDialogOpen = true;
-
-    String senderName = 'Someone';
-    try {
-      final PublicUser sender = await UsersApi.instance.getById(fromUserId);
-      senderName = sender.displayName.trim().isEmpty
-          ? sender.username
-          : sender.displayName;
-    } catch (_) {}
-
-    if (!mounted) {
-      _friendRequestDialogOpen = false;
-      return;
-    }
-
-    final String? action = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('Friend request'),
-          content: Text('$senderName sent you a friend request.'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, 'reject'),
-              child: const Text('Decline'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(dialogContext, 'accept'),
-              child: const Text('Accept'),
-            ),
-          ],
-        );
-      },
-    );
-
-    _friendRequestDialogOpen = false;
-
-    if (action == null || !mounted) {
-      return;
-    }
-
-    try {
-      await FriendsApi.instance.updateRequest(
-        requestId: requestId,
-        action: action,
-      );
-      await NotificationsApi.instance.markRead(notification.id);
-      await _loadUnreadNotifications();
-      setState(() => _notificationsRefreshSignal += 1);
-
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            action == 'accept'
-                ? 'Friend request accepted.'
-                : 'Friend request declined.',
-          ),
-        ),
-      );
-    } on ApiException catch (error) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error.message)));
-    }
   }
 
   Future<void> _openNotifications() async {

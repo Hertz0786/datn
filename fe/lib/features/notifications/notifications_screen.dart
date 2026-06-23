@@ -151,35 +151,50 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         requestId: requestId,
         action: action,
       );
-      if (!notification.isRead) {
-        await NotificationsApi.instance.markRead(notification.id);
-      }
-      await _loadNotifications();
-
+    } catch (error) {
       if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            action == 'accept'
-                ? 'Friend request accepted.'
-                : 'Friend request declined.',
-          ),
-        ),
-      );
-    } on ApiException catch (error) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error.message)));
-    } finally {
-      if (mounted) {
         setState(() => _respondingRequestId = null);
+        return;
       }
+      final String msg = error.toString().toLowerCase();
+      if (msg.contains('already')) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              action == 'accept'
+                  ? 'Friend request already accepted.'
+                  : 'Friend request already processed.',
+            ),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error.toString())),
+        );
+      }
+      setState(() => _respondingRequestId = null);
+      return;
     }
+
+    if (!notification.isRead) {
+      await NotificationsApi.instance.markRead(notification.id);
+    }
+    await _loadNotifications();
+
+    setState(() => _respondingRequestId = null);
+
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          action == 'accept'
+              ? 'Friend request accepted.'
+              : 'Friend request declined.',
+        ),
+      ),
+    );
   }
 
   Future<void> _respondToGroupJoinRequest({

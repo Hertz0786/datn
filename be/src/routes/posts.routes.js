@@ -534,29 +534,47 @@ router.post(
     let updated;
     let finalReaction = reaction;
 
+    // Use atomic findOneAndDelete / findOneAndUpdate to avoid race
+    // between checking existence and writing. Both operations are
+    // atomic in MongoDB, so concurrent requests cannot both pass the
+    // "existing not found" check.
     if (existing) {
       if (existing.reaction === reaction) {
-        // Toggle off when user taps the same reaction again.
-        await PostReaction.deleteOne({ _id: existing._id });
-        updated = await Post.findByIdAndUpdate(
+        // Toggle off: atomically delete the reaction row.
+        const deleted = await PostReaction.findOneAndDelete({
+          _id: existing._id,
           postId,
-          { $inc: { reactionCount: -1 } },
-          { new: true },
-        );
-        if (updated.reactionCount < 0) {
-          updated.reactionCount = 0;
-          await updated.save();
+          userId: req.user.id,
+        });
+        if (deleted) {
+          updated = await Post.findByIdAndUpdate(
+            postId,
+            { $inc: { reactionCount: -1 } },
+            { returnNewDocument: true },
+          );
+          if (updated && updated.reactionCount < 0) {
+            updated.reactionCount = 0;
+            await updated.save();
+          }
+        } else {
+          updated = await Post.findById(postId);
         }
         liked = false;
         finalReaction = null;
       } else {
         // Switch reaction in place; count remains the same.
-        existing.reaction = reaction;
-        await existing.save();
+        await PostReaction.findOneAndUpdate(
+          { _id: existing._id, postId, userId: req.user.id },
+          { $set: { reaction } },
+          { returnNewDocument: true },
+        );
         updated = await Post.findById(postId);
         liked = true;
       }
     } else {
+      // No existing reaction — try to create one atomically.
+      // handle the duplicate-key error gracefully so a concurrent
+      // request does not crash this one.
       let createdReaction = false;
       try {
         await PostReaction.create({
@@ -569,12 +587,14 @@ router.post(
         if (error.code !== 11000) {
           throw error;
         }
+        // Another request already created the reaction between our
+        // findOne and create — that's fine, treat it as a success.
       }
       updated = createdReaction
         ? await Post.findByIdAndUpdate(
             postId,
             { $inc: { reactionCount: 1 } },
-            { new: true },
+            { returnNewDocument: true },
           )
         : await Post.findById(postId);
       liked = true;
@@ -815,7 +835,7 @@ router.patch(
     const updated = await Post.findByIdAndUpdate(
       postId,
       { $set: update },
-      { new: true, runValidators: true },
+        { returnNewDocument: true, runValidators: true },
     );
 
     emitToPost(postId, 'post:updated', {

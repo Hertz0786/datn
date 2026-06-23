@@ -8,6 +8,7 @@ class CommentItem {
     required this.authorAvatarUrl,
     required this.content,
     required this.mediaUrls,
+    required this.voiceUrl,
     required this.parentCommentId,
     required this.likeCount,
     required this.likedByMe,
@@ -24,6 +25,7 @@ class CommentItem {
   final String authorAvatarUrl;
   final String content;
   final List<String> mediaUrls;
+  final String voiceUrl;
   final String? parentCommentId;
   final int likeCount;
   final bool? likedByMe;
@@ -42,6 +44,7 @@ class CommentItem {
     String? authorAvatarUrl,
     String? content,
     List<String>? mediaUrls,
+    String? voiceUrl,
     String? parentCommentId,
     int? likeCount,
     bool? likedByMe,
@@ -58,6 +61,7 @@ class CommentItem {
       authorAvatarUrl: authorAvatarUrl ?? this.authorAvatarUrl,
       content: content ?? this.content,
       mediaUrls: mediaUrls ?? this.mediaUrls,
+      voiceUrl: voiceUrl ?? this.voiceUrl,
       parentCommentId: parentCommentId ?? this.parentCommentId,
       likeCount: likeCount ?? this.likeCount,
       likedByMe: likedByMe ?? this.likedByMe ?? false,
@@ -100,6 +104,7 @@ class CommentItem {
       mediaUrls: (json['mediaUrls'] as List<dynamic>? ?? const [])
           .map((item) => item.toString())
           .toList(),
+      voiceUrl: (json['voiceUrl'] ?? '').toString(),
       parentCommentId: json['parentCommentId']?.toString(),
       likeCount: (json['likeCount'] as num?)?.toInt() ?? 0,
       likedByMe: json['likedByMe'] == true,

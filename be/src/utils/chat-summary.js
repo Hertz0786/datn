@@ -13,6 +13,8 @@ function serializeMessage(message) {
     senderId: message.senderId.toString(),
     content: message.content,
     mediaUrls: message.mediaUrls,
+    type: message.type || 'TEXT',
+    postId: message.postId ? message.postId.toString() : null,
     status: message.status,
     createdAt: message.createdAt,
     updatedAt: message.updatedAt,
@@ -48,22 +50,25 @@ async function buildChatSummaries(chats, currentUserId) {
     users.map((user) => [user._id.toString(), toPublicUser(user)]),
   );
 
-  const lastMessages = await Promise.all(
-    chats.map((chat) =>
-      Message.findOne({ chatId: chat._id, status: 'SENT' }).sort({
-        createdAt: -1,
-      }),
-    ),
-  );
+  const chatIds = chats.map((c) => c._id);
+  const lastMessagesMap = new Map();
+  const raw = await Message.aggregate([
+    { $match: { chatId: { $in: chatIds }, status: 'SENT' } },
+    { $sort: { createdAt: -1 } },
+    { $group: { _id: '$chatId', lastMessage: { $first: '$$ROOT' } } },
+  ]);
+  for (const row of raw) {
+    lastMessagesMap.set(row._id.toString(), row.lastMessage);
+  }
 
-  return chats.map((chat, index) => {
+  return chats.map((chat) => {
     const memberIdStrings = chat.memberIds.map((memberId) =>
       memberId.toString(),
     );
     const otherUserId = memberIdStrings.find(
       (memberId) => memberId !== currentUserId,
     );
-    const lastMessage = lastMessages[index];
+    const lastMessage = lastMessagesMap.get(chat._id.toString()) || null;
     const memberUsers = memberIdStrings
       .map((memberId) => usersById.get(memberId))
       .filter(Boolean);

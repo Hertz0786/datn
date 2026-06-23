@@ -42,7 +42,7 @@ router.patch(
     const notification = await Notification.findOneAndUpdate(
       { _id: notificationId, userId: req.user.id },
       { $set: { readAt: new Date() } },
-      { new: true },
+      { returnNewDocument: true },
     );
 
     if (!notification) {

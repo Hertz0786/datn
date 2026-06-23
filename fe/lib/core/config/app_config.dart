@@ -1,9 +1,10 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 class AppConfig {
   static String get apiBaseUrl {
-    const String fromEnv = String.fromEnvironment('API_BASE_URL');
-    if (fromEnv.isNotEmpty) {
+    final String? fromEnv = dotenv.env['API_BASE_URL'];
+    if (fromEnv != null && fromEnv.isNotEmpty) {
       return fromEnv;
     }
 
@@ -19,10 +20,10 @@ class AppConfig {
   }
 
   static String get agoraAppId {
-    const String fromEnv = String.fromEnvironment('AGORA_APP_ID');
-    if (fromEnv.isNotEmpty) {
-      return fromEnv;
-    }
-    return '';
+    return dotenv.env['AGORA_APP_ID'] ?? '';
+  }
+
+  static String get googleClientId {
+    return dotenv.env['GOOGLE_CLIENT_ID'] ?? '';
   }
 }

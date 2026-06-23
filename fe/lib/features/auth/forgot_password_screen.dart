@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/network/api_exception.dart';
 import '../../core/services/auth_api.dart';
@@ -11,93 +14,131 @@ class ForgotPasswordScreen extends StatefulWidget {
 }
 
 class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
-  final TextEditingController _accountController = TextEditingController();
-  final TextEditingController _tokenController = TextEditingController();
+  final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _confirmPasswordController =
       TextEditingController();
-  final FocusNode _accountFocusNode = FocusNode();
+
+  final List<TextEditingController> _otpControllers = List.generate(
+    6,
+    (_) => TextEditingController(),
+  );
+  final List<FocusNode> _otpFocusNodes = List.generate(6, (_) => FocusNode());
+
   bool _isSubmitting = false;
-  bool _hasInteracted = false;
-  bool _resetMode = false;
+  bool _isSendingCode = false;
+  bool _codeSent = false;
+  int _countdownSeconds = 0;
+  Timer? _countdownTimer;
 
   @override
   void dispose() {
-    _accountController.dispose();
-    _tokenController.dispose();
+    _emailController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
-    _accountFocusNode.dispose();
+    for (final c in _otpControllers) {
+      c.dispose();
+    }
+    for (final f in _otpFocusNodes) {
+      f.dispose();
+    }
+    _countdownTimer?.cancel();
     super.dispose();
   }
 
-  void _hideHint() {
-    if (_hasInteracted) {
-      return;
-    }
-    setState(() => _hasInteracted = true);
+  void _startCountdown(int seconds) {
+    _countdownTimer?.cancel();
+    setState(() {
+      _countdownSeconds = seconds;
+    });
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      setState(() {
+        _countdownSeconds--;
+      });
+      if (_countdownSeconds <= 0) {
+        timer.cancel();
+      }
+    });
   }
 
-  Future<void> _submit() async {
-    final String account = _accountController.text.trim();
-    if (account.isEmpty) {
+  void _onOtpChanged(String value, int index) {
+    if (value.isNotEmpty && index < 5) {
+      _otpFocusNodes[index + 1].requestFocus();
+    }
+    if (_otpControllers.every((c) => c.text.isNotEmpty)) {
+      FocusScope.of(context).unfocus();
+    }
+    setState(() {});
+  }
+
+  void _onOtpKey(String value, int index) {
+    if (value.isEmpty && index > 0) {
+      _otpFocusNodes[index - 1].requestFocus();
+    }
+  }
+
+  String get _otpCode =>
+      _otpControllers.map((c) => c.text).join();
+
+  Future<void> _sendResetCode() async {
+    final String email = _emailController.text.trim();
+    if (email.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter your email or username.')),
+        const SnackBar(content: Text('Please enter your email address.')),
       );
       return;
     }
 
-    setState(() => _isSubmitting = true);
+    final emailRegex = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$');
+    if (!emailRegex.hasMatch(email)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a valid email address.')),
+      );
+      return;
+    }
+
+    setState(() => _isSendingCode = true);
 
     try {
-      final String? resetToken = await AuthApi.instance.requestPasswordReset(
-        username: account,
-      );
-
-      if (!mounted) {
-        return;
-      }
-
-      if (resetToken != null && resetToken.isNotEmpty) {
-        _tokenController.text = resetToken;
-      }
-
-      setState(() => _resetMode = true);
+      await AuthApi.instance.sendPasswordResetCode(email: email);
+      if (!mounted) return;
+      setState(() => _codeSent = true);
+      _startCountdown(60);
+      _otpFocusNodes[0].requestFocus();
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Reset token has been created.')),
+        const SnackBar(
+          content: Text('Reset code sent. Check your email.'),
+        ),
       );
     } on ApiException catch (error) {
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(error.message)));
     } catch (error) {
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Reset request failed: $error')));
+      ).showSnackBar(SnackBar(content: Text('Request failed: $error')));
     } finally {
       if (mounted) {
-        setState(() => _isSubmitting = false);
+        setState(() => _isSendingCode = false);
       }
     }
   }
 
   Future<void> _resetPassword() async {
-    final String username = _accountController.text.trim();
-    final String token = _tokenController.text.trim();
+    final String email = _emailController.text.trim();
     final String password = _passwordController.text;
     final String confirmPassword = _confirmPasswordController.text;
 
-    if (username.isEmpty || token.isEmpty || password.isEmpty) {
+    if (_otpCode.length < 6 || password.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please enter username, token, password.'),
-        ),
+        const SnackBar(content: Text('Please fill in all fields.')),
       );
       return;
     }
@@ -107,17 +148,26 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       ).showSnackBar(const SnackBar(content: Text('Passwords do not match.')));
       return;
     }
+    if (password.length < 6) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(
+        const SnackBar(content: Text('Password must be at least 6 characters.')),
+      );
+      return;
+    }
 
     setState(() => _isSubmitting = true);
 
     try {
       await AuthApi.instance.resetPassword(
-        username: username,
-        token: token,
+        email: email,
+        code: _otpCode,
         password: password,
       );
 
       if (!mounted) {
+        _isSubmitting = false;
         return;
       }
 
@@ -127,6 +177,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       Navigator.pop(context);
     } on ApiException catch (error) {
       if (!mounted) {
+        _isSubmitting = false;
         return;
       }
       ScaffoldMessenger.of(
@@ -134,11 +185,12 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       ).showSnackBar(SnackBar(content: Text(error.message)));
     } catch (error) {
       if (!mounted) {
+        _isSubmitting = false;
         return;
       }
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Reset password failed: $error')));
+      ).showSnackBar(SnackBar(content: Text('Reset failed: $error')));
     } finally {
       if (mounted) {
         setState(() => _isSubmitting = false);
@@ -148,8 +200,9 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
   @override
   Widget build(BuildContext context) {
-    const Color primary = Color(0xFF33B8FF);
-    const Color titleColor = Color(0xFF1A3D7C);
+    const primary = Color(0xFF33B8FF);
+    const accent = Color(0xFFFF9AD5);
+    const titleColor = Color(0xFF1A3D7C);
 
     return Scaffold(
       backgroundColor: const Color(0xFFF6FAFF),
@@ -222,7 +275,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                     SizedBox(width: 12),
                     Expanded(
                       child: Text(
-                        'Enter your email or username and we will send you instructions to reset your password.',
+                        'Enter your email and we will send you a code to reset your password.',
                         style: TextStyle(
                           color: Color(0xFF1E3C77),
                           height: 1.35,
@@ -234,108 +287,73 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                 ),
               ),
               const SizedBox(height: 22),
-              const Text(
-                'Email or Username',
-                style: TextStyle(
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF2A4474),
-                ),
+
+              // --- Email section ---
+              _EmailField(
+                controller: _emailController,
+                label: 'Email Address',
+                hint: 'yourname@example.com',
+                icon: Icons.alternate_email_rounded,
+                color: titleColor,
+                isSendingCode: _isSendingCode,
+                countdownSeconds: _countdownSeconds,
+                onSendCode: _sendResetCode,
               ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _accountController,
-                focusNode: _accountFocusNode,
-                keyboardType: TextInputType.emailAddress,
-                textInputAction: TextInputAction.done,
-                onTap: _hideHint,
-                onSubmitted: (_) => _isSubmitting ? null : _submit(),
-                decoration: InputDecoration(
-                  hintText: _hasInteracted ? null : 'yourname@example.com',
-                  prefixIcon: const Icon(
-                    Icons.alternate_email_rounded,
-                    color: titleColor,
-                  ),
-                  filled: true,
-                  fillColor: Colors.white,
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 16,
-                  ),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(18),
-                    borderSide: BorderSide.none,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 18),
-              if (_resetMode) ...[
-                const Text(
-                  'Reset Token',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFF2A4474),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _tokenController,
-                  decoration: _inputDecoration(
-                    hint: 'Paste reset token',
-                    icon: Icons.key_rounded,
-                    titleColor: titleColor,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _passwordController,
-                  obscureText: true,
-                  decoration: _inputDecoration(
-                    hint: 'New password',
-                    icon: Icons.lock_outline_rounded,
-                    titleColor: titleColor,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _confirmPasswordController,
-                  obscureText: true,
-                  decoration: _inputDecoration(
-                    hint: 'Confirm new password',
-                    icon: Icons.lock_reset_rounded,
-                    titleColor: titleColor,
-                  ),
-                ),
-                const SizedBox(height: 18),
+
+              // --- OTP boxes ---
+              if (_codeSent) ...[
+                const SizedBox(height: 20),
+                _buildOtpSection(primary),
               ],
-              ElevatedButton.icon(
-                onPressed: _isSubmitting
+
+              // --- Password fields ---
+              if (_codeSent) ...[
+                const SizedBox(height: 18),
+                _PasswordField(
+                  controller: _passwordController,
+                  label: 'New password',
+                  hint: '********',
+                  icon: Icons.lock_outline_rounded,
+                  color: titleColor,
+                ),
+                const SizedBox(height: 14),
+                _PasswordField(
+                  controller: _confirmPasswordController,
+                  label: 'Confirm new password',
+                  hint: '********',
+                  icon: Icons.lock_reset_rounded,
+                  color: titleColor,
+                ),
+              ],
+
+              const SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: _isSubmitting || _isSendingCode
                     ? null
-                    : (_resetMode ? _resetPassword : _submit),
+                    : (_codeSent ? _resetPassword : _sendResetCode),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: primary,
+                  backgroundColor: _codeSent ? accent : primary,
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(16),
                   ),
                 ),
-                icon: _isSubmitting
+                child: _isSubmitting || _isSendingCode
                     ? const SizedBox(
-                        width: 18,
-                        height: 18,
+                        width: 20,
+                        height: 20,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
                           color: Colors.white,
                         ),
                       )
-                    : const Icon(Icons.send_rounded),
-                label: Text(
-                  _isSubmitting
-                      ? 'Sending...'
-                      : (_resetMode ? 'Reset Password' : 'Send Recovery Link'),
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
+                    : Text(
+                        _codeSent ? 'Reset Password' : 'Send Reset Code',
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
               ),
+
               const SizedBox(height: 12),
               TextButton(
                 onPressed: () => Navigator.pop(context),
@@ -354,21 +372,275 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     );
   }
 
-  InputDecoration _inputDecoration({
-    required String hint,
-    required IconData icon,
-    required Color titleColor,
-  }) {
-    return InputDecoration(
-      hintText: hint,
-      prefixIcon: Icon(icon, color: titleColor),
-      filled: true,
-      fillColor: Colors.white,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(18),
-        borderSide: BorderSide.none,
-      ),
+  Widget _buildOtpSection(Color color) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Reset code',
+          style: TextStyle(
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF2A4474),
+            fontSize: 13,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: List.generate(6, (index) {
+            return Container(
+              width: 46,
+              height: 52,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: color.withValues(alpha: 0.4),
+                  width: 1.5,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: color.withValues(alpha: 0.08),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: TextField(
+                controller: _otpControllers[index],
+                focusNode: _otpFocusNodes[index],
+                keyboardType: TextInputType.number,
+                textAlign: TextAlign.center,
+                maxLength: 1,
+                style: const TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF1A3D7C),
+                ),
+                decoration: const InputDecoration(
+                  border: InputBorder.none,
+                  counterText: '',
+                ),
+                inputFormatters: [
+                  FilteringTextInputFormatter.digitsOnly,
+                ],
+                onChanged: (value) => _onOtpChanged(value, index),
+                onSubmitted: (_) => _onOtpKey('', index),
+              ),
+            );
+          }),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              _countdownSeconds > 0
+                  ? 'Resend in ${_countdownSeconds}s'
+                  : 'Didn\'t receive the code?',
+              style: TextStyle(
+                fontSize: 12,
+                color: _countdownSeconds > 0
+                    ? color.withValues(alpha: 0.6)
+                    : const Color(0xFF3A5A8A),
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            if (_countdownSeconds <= 0) ...[
+              const SizedBox(width: 4),
+              GestureDetector(
+                onTap: _sendResetCode,
+                child: Text(
+                  'Resend',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: color,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _EmailField extends StatefulWidget {
+  const _EmailField({
+    required this.controller,
+    required this.label,
+    required this.hint,
+    required this.icon,
+    required this.color,
+    required this.isSendingCode,
+    required this.countdownSeconds,
+    required this.onSendCode,
+  });
+
+  final TextEditingController controller;
+  final String label;
+  final String hint;
+  final IconData icon;
+  final Color color;
+  final bool isSendingCode;
+  final int countdownSeconds;
+  final VoidCallback onSendCode;
+
+  @override
+  State<_EmailField> createState() => _EmailFieldState();
+}
+
+class _EmailFieldState extends State<_EmailField> {
+  final FocusNode _focusNode = FocusNode();
+  bool _hasInteracted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode.addListener(_onFocusChanged);
+  }
+
+  void _onFocusChanged() {
+    if (_focusNode.hasFocus) _hideHint();
+  }
+
+  void _hideHint() {
+    if (_hasInteracted) return;
+    setState(() => _hasInteracted = true);
+  }
+
+  @override
+  void dispose() {
+    _focusNode.removeListener(_onFocusChanged);
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bool canSend = widget.controller.text.trim().isNotEmpty;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          widget.label,
+          style: const TextStyle(
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF2A4474),
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: widget.controller,
+          focusNode: _focusNode,
+          keyboardType: TextInputType.emailAddress,
+          textInputAction: TextInputAction.done,
+          onTap: _hideHint,
+          onChanged: (_) => setState(() {}),
+          decoration: InputDecoration(
+            hintText: _hasInteracted ? null : widget.hint,
+            prefixIcon: Icon(widget.icon, color: widget.color),
+            suffixIcon: widget.countdownSeconds <= 0
+                ? canSend
+                    ? IconButton(
+                        onPressed: widget.isSendingCode
+                            ? null
+                            : widget.onSendCode,
+                        icon: widget.isSendingCode
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.send_rounded, size: 20),
+                      )
+                    : const SizedBox.shrink()
+                : Container(
+                    margin: const EdgeInsets.only(right: 12),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: widget.color.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      '${widget.countdownSeconds}s',
+                      style: TextStyle(
+                        color: widget.color,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+            filled: true,
+            fillColor: Colors.white,
+            contentPadding: const EdgeInsets.symmetric(
+              vertical: 16,
+              horizontal: 16,
+            ),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(18),
+              borderSide: BorderSide.none,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PasswordField extends StatelessWidget {
+  const _PasswordField({
+    required this.controller,
+    required this.label,
+    required this.hint,
+    required this.icon,
+    required this.color,
+  });
+
+  final TextEditingController controller;
+  final String label;
+  final String hint;
+  final IconData icon;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF2A4474),
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: controller,
+          obscureText: true,
+          decoration: InputDecoration(
+            hintText: hint,
+            prefixIcon: Icon(icon, color: color),
+            filled: true,
+            fillColor: Colors.white,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 16,
+            ),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(18),
+              borderSide: BorderSide.none,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

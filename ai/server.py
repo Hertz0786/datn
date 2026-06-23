@@ -1,4 +1,5 @@
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -6,8 +7,12 @@ from typing import Any
 import cv2
 import numpy as np
 import tensorflow as tf
+import whisper
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from PIL import Image, ImageOps
+import logging
+
+_logger = logging.getLogger(__name__)
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -17,6 +22,7 @@ BLOCK_THRESHOLD = float(os.getenv("AI_BLOCK_THRESHOLD", "0.75"))
 REVIEW_THRESHOLD = float(os.getenv("AI_REVIEW_THRESHOLD", "0.55"))
 MAX_VIDEO_FRAMES = int(os.getenv("AI_MAX_VIDEO_FRAMES", "12"))
 MAX_FILE_MB = int(os.getenv("AI_MAX_FILE_MB", "80"))
+WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "base")
 
 CLASS_NAMES = [
     "baoluc",
@@ -38,6 +44,7 @@ UNSAFE_LABELS = {
 
 app = FastAPI(title="Kiddo AI Media Moderation", version="1.0.0")
 model: Any | None = None
+whisper_model: Any | None = None
 
 
 @app.on_event("startup")
@@ -48,10 +55,27 @@ def load_ai_model() -> None:
     model = tf.keras.models.load_model(MODEL_PATH, compile=False)
 
 
+@app.on_event("startup")
+def load_whisper_model() -> None:
+    global whisper_model
+    try:
+        whisper_model = whisper.load_model(WHISPER_MODEL_SIZE)
+    except Exception as error:
+        raise RuntimeError(
+            f"Failed to load Whisper model ({WHISPER_MODEL_SIZE}): {error}"
+        ) from error
+
+
 def _require_model():
     if model is None:
         raise HTTPException(status_code=503, detail="AI model is not loaded.")
     return model
+
+
+def _require_whisper():
+    if whisper_model is None:
+        raise HTTPException(status_code=503, detail="Whisper model is not loaded.")
+    return whisper_model
 
 
 def _preprocess_image(image: Image.Image) -> np.ndarray:
@@ -74,13 +98,13 @@ def _predict_image(image: Image.Image) -> dict[str, Any]:
         for label, score in scores.items()
         if label in UNSAFE_LABELS
     }
-    unsafe_label = max(unsafe_scores, key=unsafe_scores.get)
+    unsafe_label = max(unsafe_scores, key=unsafe_scores.get) if unsafe_scores else ''
     return {
         "scores": scores,
         "topLabel": top_label,
         "topScore": scores[top_label],
         "unsafeLabel": unsafe_label,
-        "unsafeScore": unsafe_scores[unsafe_label],
+        "unsafeScore": unsafe_scores.get(unsafe_label, 0.0),
     }
 
 
@@ -131,6 +155,22 @@ def _sample_video_frames(video_path: str, max_frames: int) -> list[tuple[int, Im
 
 
 def _summarize_results(results: list[dict[str, Any]], media_type: str) -> dict[str, Any]:
+    if not results:
+        return {
+            "allowed": True,
+            "decision": "APPROVED",
+            "mediaType": media_type,
+            "topLabel": "",
+            "topScore": 0.0,
+            "unsafeLabel": "",
+            "unsafeScore": 0.0,
+            "framesChecked": 0,
+            "thresholds": {
+                "review": REVIEW_THRESHOLD,
+                "block": BLOCK_THRESHOLD,
+            },
+            "matches": [],
+        }
     worst = max(results, key=lambda item: item["unsafeScore"])
     decision = _decision_from_score(worst["unsafeScore"])
     return {
@@ -165,6 +205,7 @@ def health() -> dict[str, Any]:
     return {
         "status": "ok",
         "modelLoaded": model is not None,
+        "whisperLoaded": whisper_model is not None,
         "modelPath": str(MODEL_PATH),
         "labels": CLASS_NAMES,
         "unsafeLabels": sorted(UNSAFE_LABELS),
@@ -206,7 +247,181 @@ async def moderate_media(
         finally:
             try:
                 os.remove(tmp_path)
-            except OSError:
-                pass
+            except OSError as e:
+                _logger.warning("Failed to remove temp file %s: %s", tmp_path, e)
 
     raise HTTPException(status_code=400, detail="Only image and video files are supported.")
+
+
+@app.post("/transcribe")
+async def transcribe_audio(
+    file: UploadFile = File(...),
+    language: str | None = Form(default="vi"),
+) -> dict[str, Any]:
+    w_model = _require_whisper()
+    content_type = (file.content_type or "").lower()
+
+    suffix = ".mp3"
+    if "video" in content_type:
+        suffix = ".mp4"
+    elif "wav" in content_type:
+        suffix = ".wav"
+    elif "ogg" in content_type:
+        suffix = ".ogg"
+    elif "m4a" in content_type:
+        suffix = ".m4a"
+
+    file_bytes = await file.read()
+    max_bytes = MAX_FILE_MB * 1024 * 1024
+    if len(file_bytes) > max_bytes:
+        raise HTTPException(status_code=413, detail=f"File must be {MAX_FILE_MB}MB or less.")
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(file_bytes)
+        tmp_path = tmp.name
+
+    try:
+        result = w_model.transcribe(
+            tmp_path,
+            language=language if language else "vi",
+            fp16=False,
+        )
+        return {
+            "text": result.get("text", "").strip(),
+            "language": result.get("language", language or "vi"),
+            "segments": [
+                {
+                    "text": seg.get("text", "").strip(),
+                    "start": seg.get("start", 0),
+                    "end": seg.get("end", 0),
+                }
+                for seg in result.get("segments", [])
+            ],
+        }
+    except Exception as error:
+        raise HTTPException(
+            status_code=500, detail=f"Transcription failed: {error}"
+        ) from error
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError as e:
+            _logger.warning("Failed to remove temp file %s: %s", tmp_path, e)
+
+
+@app.post("/transcribe-moderate")
+async def transcribe_and_moderate(
+    file: UploadFile = File(...),
+    language: str | None = Form(default="vi"),
+    audio_only: bool = Form(default=False),
+) -> dict[str, Any]:
+    content_type = (file.content_type or "").lower()
+
+    suffix = ".mp3"
+    if "video" in content_type:
+        suffix = ".mp4"
+    elif "wav" in content_type:
+        suffix = ".wav"
+    elif "ogg" in content_type:
+        suffix = ".ogg"
+    elif "m4a" in content_type:
+        suffix = ".m4a"
+
+    file_bytes = await file.read()
+    max_bytes = MAX_FILE_MB * 1024 * 1024
+    if len(file_bytes) > max_bytes:
+        raise HTTPException(status_code=413, detail=f"File must be {MAX_FILE_MB}MB or less.")
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(file_bytes)
+        tmp_path = tmp.name
+
+    try:
+        w_model = _require_whisper()
+        transcribe_result = w_model.transcribe(
+            tmp_path,
+            language=language if language else "vi",
+            fp16=False,
+        )
+        transcribed_text = transcribe_result.get("text", "").strip()
+
+        moderation_result = _moderate_text(transcribed_text)
+
+        return {
+            "text": transcribed_text,
+            "language": transcribe_result.get("language", language or "vi"),
+            "segments": [
+                {
+                    "text": seg.get("text", "").strip(),
+                    "start": seg.get("start", 0),
+                    "end": seg.get("end", 0),
+                }
+                for seg in transcribe_result.get("segments", [])
+            ],
+            "moderation": moderation_result,
+        }
+    except Exception as error:
+        raise HTTPException(
+            status_code=500, detail=f"Transcribe-moderate failed: {error}"
+        ) from error
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError as e:
+            _logger.warning("Failed to remove temp file %s: %s", tmp_path, e)
+
+
+# ---------- text moderation helpers ----------
+
+VIETNAMESE_KEYWORDS = [
+    "dm", "đm", "địt", "dit", "cặc", "lồn", "buồi", "cặk", "ngu", "ngụy",
+    "chết", "tự sát", "treo cổ", "uống thuốc", "chết đi", "giết", "mày chết",
+    "đánh", "đập", "hành hung", "bạo lực", "nude", "sex", "xxx", "porn",
+    "khỏa thân", "khiêu dâm", "hentai", "bắn", "nổ", "khủng bố", "bomb",
+    "ma túy", "drug", "cần sa", "heroin", "cocaine", "thuốc lắc", "mda",
+    "rape", "hiếp", "xâm hại", "lạm dụng", "grooming",
+]
+# Pre-build a regex that matches each keyword as a whole word (word boundary),
+# so "ngu" does not match inside "language" or "bangu".
+_KEYWORD_PATTERN = re.compile(
+    r'(?<!\w)(' + '|'.join(re.escape(kw) for kw in VIETNAMESE_KEYWORDS) + r')(?!\w)',
+    re.IGNORECASE,
+)
+
+FLAG_KEYWORD_WEIGHT = 0.5
+
+REVIEW_KEYWORD_WEIGHT = 0.25
+
+
+def _moderate_text(text: str) -> dict[str, Any]:
+    if not text:
+        return {
+            "isFlagged": False,
+            "decision": "APPROVED",
+            "flaggedKeywords": [],
+            "unsafeScore": 0.0,
+        }
+
+    found_keywords = _KEYWORD_PATTERN.findall(text)
+    keyword_count = len(found_keywords)
+
+    if keyword_count >= 3:
+        unsafe_score = min(1.0, FLAG_KEYWORD_WEIGHT * keyword_count / 3)
+    elif keyword_count >= 1:
+        unsafe_score = REVIEW_KEYWORD_WEIGHT * keyword_count
+    else:
+        unsafe_score = 0.0
+
+    if unsafe_score >= BLOCK_THRESHOLD:
+        decision = "BLOCKED"
+    elif unsafe_score >= REVIEW_THRESHOLD:
+        decision = "REVIEW"
+    else:
+        decision = "APPROVED"
+
+    return {
+        "isFlagged": decision != "APPROVED",
+        "decision": decision,
+        "flaggedKeywords": found_keywords,
+        "unsafeScore": round(unsafe_score, 4),
+    }

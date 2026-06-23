@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../app/app_shell.dart';
 import '../../core/network/api_exception.dart';
@@ -15,45 +18,140 @@ class RegisterScreen extends StatefulWidget {
 class _RegisterScreenState extends State<RegisterScreen> {
   final TextEditingController _displayNameController = TextEditingController();
   final TextEditingController _usernameController = TextEditingController();
-  final TextEditingController _ageController = TextEditingController();
+  final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _confirmPasswordController =
       TextEditingController();
+  DateTime? _selectedDate;
+
+  final List<TextEditingController> _otpControllers = List.generate(
+    6,
+    (_) => TextEditingController(),
+  );
+  final List<FocusNode> _otpFocusNodes = List.generate(6, (_) => FocusNode());
 
   bool _isSubmitting = false;
+  bool _isSendingCode = false;
+  bool _codeSent = false;
+  int _countdownSeconds = 0;
+  Timer? _countdownTimer;
 
   @override
   void dispose() {
     _displayNameController.dispose();
     _usernameController.dispose();
-    _ageController.dispose();
+    _emailController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
+    for (final c in _otpControllers) {
+      c.dispose();
+    }
+    for (final f in _otpFocusNodes) {
+      f.dispose();
+    }
+    _countdownTimer?.cancel();
     super.dispose();
   }
+
+  void _startCountdown(int seconds) {
+    _countdownTimer?.cancel();
+    setState(() {
+      _countdownSeconds = seconds;
+    });
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      setState(() {
+        _countdownSeconds--;
+      });
+      if (_countdownSeconds <= 0) {
+        timer.cancel();
+      }
+    });
+  }
+
+  void _onOtpChanged(String value, int index) {
+    if (value.isNotEmpty && index < 5) {
+      _otpFocusNodes[index + 1].requestFocus();
+    }
+    if (_otpControllers.every((c) => c.text.isNotEmpty)) {
+      FocusScope.of(context).unfocus();
+    }
+    setState(() {});
+  }
+
+  void _onOtpKey(String value, int index) {
+    if (value.isEmpty && index > 0) {
+      _otpFocusNodes[index - 1].requestFocus();
+    }
+  }
+
+  Future<void> _sendVerificationCode() async {
+    final String email = _emailController.text.trim();
+    if (email.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter your email address.')),
+      );
+      return;
+    }
+
+    final emailRegex = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$');
+    if (!emailRegex.hasMatch(email)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a valid email address.')),
+      );
+      return;
+    }
+
+    setState(() => _isSendingCode = true);
+
+    try {
+      await AuthApi.instance.sendVerificationCode(email: email);
+      if (!mounted) return;
+      setState(() => _codeSent = true);
+      _startCountdown(60);
+      _otpFocusNodes[0].requestFocus();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Verification code sent. Check your email.'),
+        ),
+      );
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to send code: $error')));
+    } finally {
+      if (mounted) {
+        setState(() => _isSendingCode = false);
+      }
+    }
+  }
+
+  String get _otpCode =>
+      _otpControllers.map((c) => c.text).join();
 
   Future<void> _submit() async {
     final String displayName = _displayNameController.text.trim();
     final String username = _usernameController.text.trim();
-    final String ageText = _ageController.text.trim();
+    final String email = _emailController.text.trim();
     final String password = _passwordController.text;
     final String confirmPassword = _confirmPasswordController.text;
 
     if (displayName.isEmpty ||
         username.isEmpty ||
-        ageText.isEmpty ||
+        _selectedDate == null ||
         password.isEmpty ||
         confirmPassword.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please fill in all required fields.')),
-      );
-      return;
-    }
-
-    final int? age = int.tryParse(ageText);
-    if (age == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Age must be a valid number.')),
       );
       return;
     }
@@ -65,22 +163,37 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
+    if (email.isNotEmpty && !_codeSent) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please send a verification code first.')),
+      );
+      return;
+    }
+
+    if (email.isNotEmpty && _otpCode.length < 6) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter the full verification code.')),
+      );
+      return;
+    }
+
     setState(() => _isSubmitting = true);
 
     try {
       await AuthApi.instance.register(
         displayName: displayName,
         username: username,
-        age: age,
+        birthDate: _selectedDate!,
         password: password,
+        email: email.isNotEmpty ? email : null,
+        verificationCode: email.isNotEmpty ? _otpCode : null,
       );
 
       if (!mounted) {
+        _isSubmitting = false;
         return;
       }
 
-      // First-time users always go through topic selection so the backend
-      // can drive the feed and search from the first session.
       await Navigator.push<List<String>>(
         context,
         MaterialPageRoute(
@@ -93,6 +206,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       );
 
       if (!mounted) {
+        _isSubmitting = false;
         return;
       }
 
@@ -102,18 +216,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
         (_) => false,
       );
     } on ApiException catch (error) {
-      if (!mounted) {
-        return;
-      }
-
+      if (!mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(error.message)));
     } catch (_) {
-      if (!mounted) {
-        return;
-      }
-
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Register failed. Please try again.')),
       );
@@ -192,7 +300,27 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     color: Color(0xFF3A5A8A),
                   ),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 24),
+
+                // --- Email section ---
+                _EmailSection(
+                  controller: _emailController,
+                  label: 'Email',
+                  hint: 'parent@example.com',
+                  icon: Icons.email_outlined,
+                  color: primary,
+                  isSendingCode: _isSendingCode,
+                  countdownSeconds: _countdownSeconds,
+                  onSendCode: _sendVerificationCode,
+                ),
+
+                // --- OTP boxes (always visible after code sent) ---
+                if (_codeSent) ...[
+                  const SizedBox(height: 16),
+                  _buildOtpSection(primary),
+                ],
+
+                const SizedBox(height: 16),
                 _InputField(
                   controller: _displayNameController,
                   label: 'Display name',
@@ -209,14 +337,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   color: accent,
                 ),
                 const SizedBox(height: 14),
-                _InputField(
-                  controller: _ageController,
-                  label: 'Age',
-                  hint: '8',
-                  icon: Icons.cake_rounded,
-                  color: primary,
-                  keyboardType: TextInputType.number,
-                ),
+                _buildBirthDateField(primary),
                 const SizedBox(height: 14),
                 _InputField(
                   controller: _passwordController,
@@ -277,14 +398,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       color: Colors.white.withValues(alpha: 0.6),
                     ),
                   ),
-                  child: Row(
+                  child: const Row(
                     children: [
-                      const Icon(
+                      Icon(
                         Icons.favorite_border,
                         color: Color(0xFF1A3D7C),
                       ),
-                      const SizedBox(width: 8),
-                      const Expanded(
+                      SizedBox(width: 8),
+                      Expanded(
                         child: Text(
                           'You can update your privacy settings anytime.',
                           style: TextStyle(
@@ -303,6 +424,321 @@ class _RegisterScreenState extends State<RegisterScreen> {
       ),
     );
   }
+
+  Future<void> _selectBirthDate() async {
+    final now = DateTime.now();
+    final earliest = DateTime(now.year - 14);
+    final latest = DateTime(now.year - 7, now.month, now.day);
+
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate ?? earliest,
+      firstDate: DateTime(now.year - 14),
+      lastDate: latest,
+      helpText: 'Select your birthday',
+      cancelText: 'Cancel',
+      confirmText: 'Confirm',
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.light(
+              primary: Color(0xFF33B8FF),
+              onPrimary: Colors.white,
+              surface: Colors.white,
+              onSurface: Color(0xFF1A3D7C),
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (picked != null) {
+      setState(() => _selectedDate = picked);
+    }
+  }
+
+  Widget _buildBirthDateField(Color color) {
+    final bool hasDate = _selectedDate != null;
+    final String displayText = hasDate
+        ? '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}'
+        : '';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Date of birth',
+          style: TextStyle(
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF2A4474),
+          ),
+        ),
+        const SizedBox(height: 8),
+        GestureDetector(
+          onTap: _selectBirthDate,
+          child: Container(
+            padding: const EdgeInsets.symmetric(
+              vertical: 16,
+              horizontal: 16,
+            ),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: color.withValues(alpha: 0.3),
+                width: 1,
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.cake_rounded, color: color),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Text(
+                    hasDate ? displayText : 'Select your birthday',
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: hasDate
+                          ? const Color(0xFF1A3D7C)
+                          : const Color(0xFF3A5A8A),
+                      fontWeight:
+                          hasDate ? FontWeight.w600 : FontWeight.w400,
+                    ),
+                  ),
+                ),
+                Icon(
+                  Icons.calendar_today_rounded,
+                  color: color,
+                  size: 20,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildOtpSection(Color color) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Verification code',
+          style: TextStyle(
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF2A4474),
+            fontSize: 13,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: List.generate(6, (index) {
+            return Container(
+              width: 46,
+              height: 52,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: const Color(0xFF33B8FF).withValues(alpha: 0.4),
+                  width: 1.5,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF33B8FF).withValues(alpha: 0.08),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: TextField(
+                controller: _otpControllers[index],
+                focusNode: _otpFocusNodes[index],
+                keyboardType: TextInputType.number,
+                textAlign: TextAlign.center,
+                maxLength: 1,
+                style: const TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF1A3D7C),
+                ),
+                decoration: const InputDecoration(
+                  border: InputBorder.none,
+                  counterText: '',
+                ),
+                inputFormatters: [
+                  FilteringTextInputFormatter.digitsOnly,
+                ],
+                onChanged: (value) => _onOtpChanged(value, index),
+                onSubmitted: (_) => _onOtpKey('', index),
+              ),
+            );
+          }),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              _countdownSeconds > 0
+                  ? 'Resend in ${_countdownSeconds}s'
+                  : 'Didn\'t receive the code?',
+              style: TextStyle(
+                fontSize: 12,
+                color: _countdownSeconds > 0
+                    ? color.withValues(alpha: 0.6)
+                    : const Color(0xFF3A5A8A),
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            if (_countdownSeconds <= 0) ...[
+              const SizedBox(width: 4),
+              GestureDetector(
+                onTap: _sendVerificationCode,
+                child: Text(
+                  'Resend',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: color,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _EmailSection extends StatefulWidget {
+  const _EmailSection({
+    required this.controller,
+    required this.label,
+    required this.hint,
+    required this.icon,
+    required this.color,
+    required this.isSendingCode,
+    required this.countdownSeconds,
+    required this.onSendCode,
+  });
+
+  final TextEditingController controller;
+  final String label;
+  final String hint;
+  final IconData icon;
+  final Color color;
+  final bool isSendingCode;
+  final int countdownSeconds;
+  final VoidCallback onSendCode;
+
+  @override
+  State<_EmailSection> createState() => _EmailSectionState();
+}
+
+class _EmailSectionState extends State<_EmailSection> {
+  final FocusNode _focusNode = FocusNode();
+  bool _hasInteracted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode.addListener(_onFocusChanged);
+  }
+
+  void _onFocusChanged() {
+    if (_focusNode.hasFocus) _hideHint();
+  }
+
+  void _hideHint() {
+    if (_hasInteracted) return;
+    setState(() => _hasInteracted = true);
+  }
+
+  @override
+  void dispose() {
+    _focusNode.removeListener(_onFocusChanged);
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bool canSend = widget.controller.text.trim().isNotEmpty;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          widget.label,
+          style: const TextStyle(
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF2A4474),
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: widget.controller,
+          focusNode: _focusNode,
+          keyboardType: TextInputType.emailAddress,
+          onTap: _hideHint,
+          onChanged: (_) => setState(() {}),
+          decoration: InputDecoration(
+            hintText: _hasInteracted ? null : widget.hint,
+            prefixIcon: Icon(widget.icon, color: widget.color),
+            suffixIcon: widget.countdownSeconds <= 0
+                ? canSend
+                    ? IconButton(
+                        onPressed: widget.isSendingCode
+                            ? null
+                            : widget.onSendCode,
+                        icon: widget.isSendingCode
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.send_rounded, size: 20),
+                      )
+                    : const SizedBox.shrink()
+                : Container(
+                    margin: const EdgeInsets.only(right: 12),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: widget.color.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      '${widget.countdownSeconds}s',
+                      style: TextStyle(
+                        color: widget.color,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+            filled: true,
+            fillColor: Colors.white,
+            contentPadding: const EdgeInsets.symmetric(
+              vertical: 16,
+              horizontal: 16,
+            ),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(18),
+              borderSide: BorderSide.none,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _InputField extends StatefulWidget {
@@ -313,7 +749,6 @@ class _InputField extends StatefulWidget {
     required this.icon,
     required this.color,
     this.obscure = false,
-    this.keyboardType,
   });
 
   final TextEditingController controller;
@@ -322,7 +757,6 @@ class _InputField extends StatefulWidget {
   final IconData icon;
   final Color color;
   final bool obscure;
-  final TextInputType? keyboardType;
 
   @override
   State<_InputField> createState() => _InputFieldState();
@@ -375,7 +809,6 @@ class _InputFieldState extends State<_InputField> {
         const SizedBox(height: 8),
         TextField(
           controller: widget.controller,
-          keyboardType: widget.keyboardType,
           obscureText: widget.obscure,
           focusNode: _focusNode,
           onTap: _hideHint,

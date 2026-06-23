@@ -126,6 +126,13 @@ const postSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
+postSchema.pre('validate', function (next) {
+  if (this.ageMin > this.ageMax) {
+    this.invalidate('ageMin', 'ageMin cannot be greater than ageMax.');
+  }
+  next();
+});
+
 postSchema.index({ topics: 1, ageMin: 1, ageMax: 1, status: 1 });
 postSchema.index({ authorId: 1, createdAt: -1 });
 postSchema.index({ groupId: 1, createdAt: -1 });
