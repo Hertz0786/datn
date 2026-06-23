@@ -6,6 +6,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/realtime_service.dart';
+import '../../features/call/services/call_service.dart';
 
 /// Persists the JWT and the cached user payload across app launches.
 ///
@@ -82,6 +83,9 @@ class AuthSession {
       _token = token;
       _user = decoded;
       isAuthenticated.value = true;
+      // Start listening for call events so incoming calls are handled
+      // even on cold start.
+      CallService.instance.bootstrap();
     } catch (_) {
       await _clearStorage();
       _token = null;
@@ -98,6 +102,9 @@ class AuthSession {
     _user = user;
     isAuthenticated.value = true;
     await _persist();
+    // Start listening for call events immediately so incoming calls are
+    // registered even before the user taps anything.
+    CallService.instance.bootstrap();
   }
 
   Future<void> updateUser(Map<String, dynamic> user) async {
@@ -109,6 +116,8 @@ class AuthSession {
     _token = null;
     _user = null;
     isAuthenticated.value = false;
+    // Tear down the call service so the next user gets a clean slate.
+    CallService.instance.resetSession();
     RealtimeService.instance.disconnect();
     await _clearStorage();
   }

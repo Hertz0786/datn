@@ -6,6 +6,7 @@ import 'app/app_theme.dart';
 import 'core/session/auth_session.dart';
 import 'features/call/screens/call_screen.dart';
 import 'features/call/screens/outgoing_call_screen.dart';
+import 'features/call/widgets/call_observer.dart';
 import 'features/onboarding/onboarding_flow_screen.dart';
 
 Future<void> main() async {
@@ -26,8 +27,9 @@ class MyApp extends StatelessWidget {
     return ValueListenableBuilder<bool>(
       valueListenable: AuthSession.instance.isAuthenticated,
       builder: (context, isAuthenticated, _) {
-        final Widget home =
-            isAuthenticated ? const AppShell() : const OnboardingFlowScreen();
+        final Widget home = isAuthenticated
+            ? const CallObserver(child: AppShell())
+            : const OnboardingFlowScreen();
 
         return MaterialApp(
           title: 'Kiddo Social',

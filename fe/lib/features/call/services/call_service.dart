@@ -94,11 +94,32 @@ class CallService extends ChangeNotifier {
           },
         ),
       );
-
-      _attachSocketListeners();
     } finally {
       _isInitializing = false;
     }
+  }
+
+  /// Call this once when the user is authenticated so that socket listeners
+  /// are registered immediately — before any call event arrives. Safe to call
+  /// multiple times. Does NOT initialize the Agora engine (that's done lazily
+  /// by [ensureInitialized]).
+  void bootstrap() {
+    _attachSocketListeners();
+  }
+
+  /// Tear down all call state. Call this when the user logs out so a new
+  /// user session starts with a clean slate.
+  void resetSession() {
+    _stopDurationTimer();
+    _activeSession = null;
+    _pendingIncoming = null;
+    _remoteUid = 0;
+    _isMuted = false;
+    _isCameraOff = false;
+    _callDuration = Duration.zero;
+    _state = CallState.idle;
+    _errorMessage = null;
+    notifyListeners();
   }
 
   // -----------------------------------------------------------------------
@@ -286,13 +307,9 @@ class CallService extends ChangeNotifier {
 
     realtime.on('call:incoming', (dynamic payload) {
       debugPrint('[CallService] socket: call:incoming - payload=$payload');
-      try {
-        final Map<String, dynamic> map = _toMap(payload);
-        final IncomingCall incoming = IncomingCall.fromJson(map);
-        registerIncoming(incoming);
-      } catch (error, stack) {
-        debugPrint('[CallService] socket: call:incoming parse error: $error\n$stack');
-      }
+      // NOTE: registerIncoming is handled by CallObserver so that
+      // IncomingCallScreen can be shown immediately. CallService keeps
+      // a minimal log here for traceability.
     });
 
     realtime.on('call:accepted', (dynamic payload) {
@@ -348,6 +365,15 @@ class CallService extends ChangeNotifier {
       }
       _setError('No answer');
       _reset();
+    });
+
+    realtime.on('call:missed', (dynamic payload) {
+      debugPrint('[CallService] socket: call:missed - payload=$payload');
+      // Callee was unreachable — clear any stale pending-incoming state.
+      if (_pendingIncoming != null) {
+        _pendingIncoming = null;
+        notifyListeners();
+      }
     });
   }
 
@@ -405,11 +431,6 @@ class CallService extends ChangeNotifier {
         'Required permissions are blocked. Enable them in Settings.',
       );
     }
-  }
-
-  Map<String, dynamic> _toMap(dynamic value) {
-    if (value is Map<String, dynamic>) return value;
-    return <String, dynamic>{};
   }
 
   String _readMessage(Object error) {
