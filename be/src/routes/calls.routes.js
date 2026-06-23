@@ -199,12 +199,23 @@ router.post('/init', requireAuth, async (req, res) => {
       !callerSettings.allowedCallTypes.includes(callType) ||
       !calleeSettings.allowedCallTypes.includes(callType)
     ) {
+      console.log(
+        `[calls/init] call type rejected: callerTypes=${callerSettings.allowedCallTypes} calleeTypes=${calleeSettings.allowedCallTypes} requested=${callType}`,
+      );
       return res
         .status(403)
         .json({ message: 'This call type is disabled.' });
     }
 
+    if (callerSettings.whoCanCall === 'nobody') {
+      console.log(`[calls/init] caller ${initiatorId} has whoCanCall=nobody`);
+      return res
+        .status(403)
+        .json({ message: 'You are not allowed to make calls.' });
+    }
+
     if (calleeSettings.whoCanCall === 'nobody') {
+      console.log(`[calls/init] callee ${calleeId} has whoCanCall=nobody`);
       return res
         .status(403)
         .json({ message: 'User is not accepting calls.' });
@@ -242,7 +253,7 @@ router.post('/init', requireAuth, async (req, res) => {
       status: 'ringing',
       initiator: initiatorId,
       callee: calleeId,
-      participants: [{ user: calleeId }],
+      participants: [{ user: initiatorId }, { user: calleeId }],
       startedAt: new Date(),
     });
 

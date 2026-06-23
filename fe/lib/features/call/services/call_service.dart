@@ -87,8 +87,6 @@ class CallService extends ChangeNotifier {
           onUserOffline:
               (RtcConnection connection, int remoteUid, UserOfflineReasonType reason) {
             _remoteUid = 0;
-            // Remote user left - end the call locally. The backend will
-            // independently record this.
             _handleRemoteEnded();
           },
           onError: (ErrorCodeType code, String message) {
@@ -244,25 +242,31 @@ class CallService extends ChangeNotifier {
 
     _setState(CallState.connecting);
 
-    await engine.enableVideo();
-    await engine.setVideoEncoderConfiguration(
-      const VideoEncoderConfiguration(
-        dimensions: VideoDimensions(width: 360, height: 640),
-        frameRate: 15,
-        bitrate: 400,
-      ),
-    );
+    if (session.isVideo) {
+      debugPrint('[CallService] _joinActiveChannel: enabling video for callType=video');
+      await engine.enableVideo();
+      await engine.setVideoEncoderConfiguration(
+        const VideoEncoderConfiguration(
+          dimensions: VideoDimensions(width: 360, height: 640),
+          frameRate: 15,
+          bitrate: 400,
+        ),
+      );
+    } else {
+      debugPrint('[CallService] _joinActiveChannel: voice call — skipping video enable');
+    }
 
+    debugPrint('[CallService] _joinActiveChannel: joining channel=${session.channelName} uid=${session.uid}');
     await engine.joinChannel(
       token: session.token,
       channelId: session.channelName,
       uid: session.uid,
-      options: const ChannelMediaOptions(
+      options: ChannelMediaOptions(
         clientRoleType: ClientRoleType.clientRoleBroadcaster,
         publishMicrophoneTrack: true,
-        publishCameraTrack: true,
+        publishCameraTrack: session.isVideo,
         autoSubscribeAudio: true,
-        autoSubscribeVideo: true,
+        autoSubscribeVideo: session.isVideo,
       ),
     );
   }
@@ -280,10 +284,27 @@ class CallService extends ChangeNotifier {
   void _attachSocketListeners() {
     final RealtimeService realtime = RealtimeService.instance;
 
+    realtime.on('call:incoming', (dynamic payload) {
+      debugPrint('[CallService] socket: call:incoming - payload=$payload');
+      try {
+        final Map<String, dynamic> map = _toMap(payload);
+        final IncomingCall incoming = IncomingCall.fromJson(map);
+        registerIncoming(incoming);
+      } catch (error, stack) {
+        debugPrint('[CallService] socket: call:incoming parse error: $error\n$stack');
+      }
+    });
+
     realtime.on('call:accepted', (dynamic payload) {
-      // Caller is informed when callee picks up; join the channel now.
-      if (_activeSession == null) return;
-      if (_state != CallState.ringing) return;
+      debugPrint('[CallService] socket: call:accepted - payload=$payload');
+      if (_activeSession == null) {
+        debugPrint('[CallService] socket: call:accepted ignored — no active session');
+        return;
+      }
+      if (_state != CallState.ringing) {
+        debugPrint('[CallService] socket: call:accepted ignored — state is $_state');
+        return;
+      }
       _joinActiveChannel().catchError((Object error) {
         _setError(_readMessage(error));
         return null;
@@ -291,24 +312,40 @@ class CallService extends ChangeNotifier {
     });
 
     realtime.on('call:rejected', (dynamic payload) {
-      if (_activeSession == null) return;
+      debugPrint('[CallService] socket: call:rejected - payload=$payload');
+      if (_activeSession == null) {
+        debugPrint('[CallService] socket: call:rejected ignored — no active session');
+        return;
+      }
       _setError('Call was declined');
       _reset();
     });
 
     realtime.on('call:ended', (dynamic payload) {
-      if (!isInCall) return;
+      debugPrint('[CallService] socket: call:ended - payload=$payload');
+      if (!isInCall) {
+        debugPrint('[CallService] socket: call:ended ignored — not in call');
+        return;
+      }
       _handleRemoteEnded();
     });
 
     realtime.on('call:cancelled', (dynamic payload) {
-      if (!isInCall && _state != CallState.ringing) return;
+      debugPrint('[CallService] socket: call:cancelled - payload=$payload');
+      if (!isInCall && _state != CallState.ringing) {
+        debugPrint('[CallService] socket: call:cancelled ignored — state=$_state');
+        return;
+      }
       _setError('Call was cancelled');
       _reset();
     });
 
     realtime.on('call:timeout', (dynamic payload) {
-      if (_activeSession == null) return;
+      debugPrint('[CallService] socket: call:timeout - payload=$payload');
+      if (_activeSession == null) {
+        debugPrint('[CallService] socket: call:timeout ignored — no active session');
+        return;
+      }
       _setError('No answer');
       _reset();
     });
@@ -368,6 +405,11 @@ class CallService extends ChangeNotifier {
         'Required permissions are blocked. Enable them in Settings.',
       );
     }
+  }
+
+  Map<String, dynamic> _toMap(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+    return <String, dynamic>{};
   }
 
   String _readMessage(Object error) {

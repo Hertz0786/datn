@@ -36,6 +36,7 @@ class _CallScreenState extends State<CallScreen> {
     final String? error = _service.errorMessage;
     if (error != null && !_hasReportedError) {
       _hasReportedError = true;
+      debugPrint('[CallScreen] reporting error to user: $error');
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -44,7 +45,9 @@ class _CallScreenState extends State<CallScreen> {
       });
     }
     if (_service.state == CallState.ended || _service.state == CallState.idle) {
-      // Backend signalled end - leave the screen.
+      // Reset error flag so next call can report its own errors.
+      _hasReportedError = false;
+      debugPrint('[CallScreen] call ended/idle — _hasReportedError reset to false');
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         if (Navigator.of(context).canPop()) {
@@ -240,13 +243,20 @@ class _RemoteVideo extends StatelessWidget {
   Widget build(BuildContext context) {
     final RtcEngine? engine = CallService.instance.engine;
     if (engine == null) {
+      debugPrint('[CallScreen] _RemoteVideo: engine is null, showing black');
       return const ColoredBox(color: Colors.black);
     }
+    final String channelName = CallService.instance.activeSession?.channelName ?? '';
+    if (channelName.isEmpty) {
+      debugPrint('[CallScreen] _RemoteVideo: channelName is empty, showing black');
+      return const ColoredBox(color: Colors.black);
+    }
+    debugPrint('[CallScreen] _RemoteVideo: rendering uid=$uid channel=$channelName');
     return AgoraVideoView(
       controller: VideoViewController.remote(
         rtcEngine: engine,
         canvas: VideoCanvas(uid: uid),
-        connection: const RtcConnection(channelId: ''),
+        connection: RtcConnection(channelId: channelName),
       ),
     );
   }
