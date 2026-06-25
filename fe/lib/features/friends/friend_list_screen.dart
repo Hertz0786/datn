@@ -294,6 +294,7 @@ class _FriendListScreenState extends State<FriendListScreen> {
             title: user.displayName,
             avatarUrl: user.avatarUrl,
             avatarLabel: user.initials,
+            members: chat.memberUsers,
           ),
         ),
       );

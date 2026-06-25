@@ -346,7 +346,7 @@ class _GoogleSignInButton extends StatelessWidget {
             height: 20,
             child: Image.network(
               'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg',
-              errorBuilder: (_, __, ___) => const Icon(
+              errorBuilder: (_, _, _) => const Icon(
                 Icons.g_mobiledata,
                 size: 22,
               ),

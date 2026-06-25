@@ -24,7 +24,7 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   int _index = 0;
   int _unreadNotifications = 0;
-  int _notificationsRefreshSignal = 0;
+  final int _notificationsRefreshSignal = 0;
   int _unreadChatMessages = 0;
 
   @override

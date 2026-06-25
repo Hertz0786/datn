@@ -375,6 +375,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
             title: _displayName,
             avatarUrl: _avatarUrl,
             avatarLabel: _avatarLabel,
+            members: chat.memberUsers,
           ),
         ),
       );
