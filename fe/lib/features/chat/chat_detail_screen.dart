@@ -867,6 +867,11 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                     const SizedBox(width: 4),
                     VoiceRecorderWidget(
                       compact: true,
+                      onUploading: () {
+                        if (mounted) {
+                          setState(() => _isSending = true);
+                        }
+                      },
                       onRecorded: (path, _) {
                         _sendMessage(voicePath: path);
                       },

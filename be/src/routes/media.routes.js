@@ -34,7 +34,7 @@ const upload = multer({
     fileSize: 25 * 1024 * 1024,
   },
   fileFilter: (req, file, callback) => {
-    if (/^(image|video)\//.test(file.mimetype)) {
+    if (/^(image|video|audio)\//.test(file.mimetype)) {
       callback(null, true);
       return;
     }
@@ -42,13 +42,13 @@ const upload = multer({
     // Fallback: some clients (notably Flutter on Android) send an empty
     // mimetype or "application/octet-stream" for image files. Trust the
     // extension as a last resort so legitimate uploads are not rejected.
-    const allowedExt = /\.(jpe?g|png|gif|webp|bmp|heic|heif|svg|mp4|mov|webm|mkv)$/i;
+    const allowedExt = /\.(jpe?g|png|gif|webp|bmp|heic|heif|svg|mp4|mov|webm|mkv|m4a|mp3|aac|opus|ogg|wav|flac)$/i;
     if (file.originalname && allowedExt.test(file.originalname)) {
       callback(null, true);
       return;
     }
 
-    callback(new Error('Only image and video files are allowed.'));
+    callback(new Error('Only image, video, and audio files are allowed.'));
   },
 });
 
@@ -183,7 +183,11 @@ router.post(
 
     const sourceType = normalizeSourceType(req.body.sourceType);
     const sourceId = await validateSource(req, sourceType, req.body.sourceId);
-    const moderation = await assertMediaAllowed(req.file);
+    const isAudio = /^audio\//.test(req.file.mimetype) ||
+      /\.(m4a|mp3|aac|opus|ogg|wav|flac)$/i.test(req.file.originalname);
+    const moderation = isAudio
+      ? { decision: 'SKIPPED', skippedReason: 'Audio files are not moderated.' }
+      : await assertMediaAllowed(req.file);
     const uploaded = await uploadBuffer(req.file, {
       sourceType,
       ownerId: req.user.id,

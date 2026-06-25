@@ -16,11 +16,15 @@ class VoiceRecorderWidget extends StatefulWidget {
   const VoiceRecorderWidget({
     super.key,
     required this.onRecorded,
+    this.onUploading,
     this.maxDurationSeconds = 60,
     this.compact = false,
   });
 
   final void Function(String filePath, int durationSeconds) onRecorded;
+  /// Called immediately before onRecorded so the parent can switch to an
+  /// "uploading" visual state while the async upload completes.
+  final VoidCallback? onUploading;
   final int maxDurationSeconds;
   final bool compact;
 
@@ -154,6 +158,7 @@ class _VoiceRecorderWidgetState extends State<VoiceRecorderWidget>
 
   void _confirmRecording() {
     if (_recordedPath == null) return;
+    widget.onUploading?.call();
     widget.onRecorded(_recordedPath!, _recordedSeconds);
     setState(() {
       _state = VoiceRecorderState.idle;

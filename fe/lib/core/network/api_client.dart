@@ -340,6 +340,19 @@ class ApiClient {
         return 'video/webm';
       case 'mkv':
         return 'video/x-matroska';
+      case 'm4a':
+      case 'aac':
+        return 'audio/aac';
+      case 'mp3':
+        return 'audio/mpeg';
+      case 'opus':
+        return 'audio/opus';
+      case 'ogg':
+        return 'audio/ogg';
+      case 'wav':
+        return 'audio/wav';
+      case 'flac':
+        return 'audio/flac';
       default:
         return 'application/octet-stream';
     }
