@@ -11,6 +11,7 @@ const { isValidObjectId } = require('../middlewares/object-id');
 const { normalizeFriendPair } = require('../utils/friendship');
 const agoraTokenService = require('../services/agora-token.service');
 const AgoraTokenService = agoraTokenService.constructor;
+const callBannerService = require('../services/call-banner.service');
 const env = require('../config/env');
 const { emitToUser } = require('../realtime/socket');
 
@@ -103,6 +104,14 @@ function scheduleRingTimeout(call) {
       fresh.endedAt = new Date();
       fresh.endReason = 'missed_timeout';
       await fresh.save();
+
+      // Persist a chat-banner message so both participants see "missed call"
+      // in their conversation timeline.
+      try {
+        await callBannerService.recordCallSummaryMessage(fresh, fresh.callee.toString());
+      } catch (bannerError) {
+        console.error('call: missed-call banner write failed:', bannerError.message);
+      }
 
       emitToUser(call.initiator.toString(), 'call:timeout', {
         callId: call._id.toString(),
@@ -400,6 +409,12 @@ router.post('/:id/reject', requireAuth, async (req, res) => {
     await call.save();
     clearRingTimeout(call._id);
 
+    try {
+      await callBannerService.recordCallSummaryMessage(call, userId);
+    } catch (bannerError) {
+      console.error('call: rejected banner write failed:', bannerError.message);
+    }
+
     emitToUser(call.initiator.toString(), 'call:rejected', {
       callId: call._id.toString(),
     });
@@ -442,6 +457,12 @@ router.post('/:id/end', requireAuth, async (req, res) => {
       await call.save();
       clearRingTimeout(call._id);
 
+      try {
+        await callBannerService.recordCallSummaryMessage(call, userId);
+      } catch (bannerError) {
+        console.error('call: ringing-cancel banner write failed:', bannerError.message);
+      }
+
       const otherUserId = isInitiator
         ? call.callee.toString()
         : call.initiator.toString();
@@ -473,6 +494,12 @@ router.post('/:id/end', requireAuth, async (req, res) => {
     }
     await call.save();
     clearRingTimeout(call._id);
+
+    try {
+      await callBannerService.recordCallSummaryMessage(call, userId);
+    } catch (bannerError) {
+      console.error('call: end banner write failed:', bannerError.message);
+    }
 
     const otherUserId = isInitiator
       ? call.callee.toString()

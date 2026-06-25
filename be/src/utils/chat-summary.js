@@ -7,7 +7,7 @@ function serializeMessage(message) {
     return null;
   }
 
-  return {
+  const base = {
     _id: message._id.toString(),
     chatId: message.chatId.toString(),
     senderId: message.senderId.toString(),
@@ -19,6 +19,22 @@ function serializeMessage(message) {
     createdAt: message.createdAt,
     updatedAt: message.updatedAt,
   };
+
+  // Expose call metadata for `type: 'CALL'` messages so the client can render
+  // the call-history banner without an extra round-trip to CallLog.
+  if (message.type === 'CALL' && message.callMeta) {
+    base.callMeta = {
+      callId: message.callMeta.callId || '',
+      callType: message.callMeta.callType || 'voice',
+      status: message.callMeta.status || 'ended',
+      durationSeconds: message.callMeta.durationSeconds || 0,
+      initiatorId: message.callMeta.initiatorId
+        ? message.callMeta.initiatorId.toString()
+        : null,
+    };
+  }
+
+  return base;
 }
 
 function fallbackGroupTitle(memberUsers, currentUserId) {

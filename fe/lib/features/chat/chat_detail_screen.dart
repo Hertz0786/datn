@@ -24,6 +24,7 @@ import '../../shared/widgets/user_avatar.dart';
 import '../../shared/widgets/voice_recorder_widget.dart';
 import 'sticker_picker_screen.dart';
 import 'moderation_alert_dialog.dart';
+import 'widgets/call_banner.dart';
 
 class ChatDetailScreen extends StatefulWidget {
   const ChatDetailScreen({
@@ -763,6 +764,16 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                       itemCount: _messages.length,
                       itemBuilder: (context, index) {
                         final ChatMessage message = _messages[index];
+                        if (message.isCallBanner) {
+                          // Call-summary messages are system events: render as
+                          // a centered banner and skip the regular bubble.
+                          final bool callFromMe =
+                              message.callMeta?.initiatorId == myId;
+                          return CallBanner(
+                            message: message,
+                            isOutgoing: callFromMe,
+                          );
+                        }
                         final bool isMe =
                             message.senderId == myId ||
                             message.senderId == 'local';

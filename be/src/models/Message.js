@@ -26,13 +26,33 @@ const messageSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ['TEXT', 'POST_SHARE'],
+      enum: ['TEXT', 'POST_SHARE', 'CALL'],
       default: 'TEXT',
     },
     postId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Post',
       default: null,
+    },
+    // Metadata for `type: 'CALL'` messages. Stores the call summary so the
+    // chat UI can render a "missed call at 22:41" / "video call · 12s" banner
+    // without having to join against CallLog at read time.
+    callMeta: {
+      callId: { type: String, default: '' },
+      callType: {
+        type: String,
+        enum: ['voice', 'video', null],
+        default: null,
+      },
+      // 'missed' | 'ended' | 'rejected' | 'cancelled'
+      status: { type: String, default: '' },
+      durationSeconds: { type: Number, default: 0 },
+      // Who placed the call (initiator). Useful for labeling the banner.
+      initiatorId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        default: null,
+      },
     },
     status: {
       type: String,
