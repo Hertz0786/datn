@@ -26,10 +26,15 @@ class _CallActionButtonsState extends State<CallActionButtons> {
 
   bool get _canCall =>
       widget.calleeId.isNotEmpty &&
-      widget.allowedCallTypes.any((t) => t == 'voice' || t == 'video');
+      (widget.allowedCallTypes.contains('voice') ||
+          widget.allowedCallTypes.contains('video'));
 
   Future<void> _startCall(String callType) async {
-    if (_busy || !_canCall) return;
+    debugPrint('[CallActionButtons] _startCall: calleeId=${widget.calleeId} type=$callType enabled=$_canCall busy=$_busy');
+    if (_busy || !_canCall) {
+      debugPrint('[CallActionButtons] _startCall: early-return because busy=$_busy canCall=$_canCall');
+      return;
+    }
     setState(() => _busy = true);
     try {
       await CallService.instance.startOutgoingCall(
@@ -40,6 +45,7 @@ class _CallActionButtonsState extends State<CallActionButtons> {
       await Navigator.of(context).pushNamed('/call/active');
     } catch (error) {
       if (!mounted) return;
+      debugPrint('[CallActionButtons] _startCall error: $error');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(error.toString())),
       );
@@ -123,7 +129,8 @@ class CallPrimaryButton extends StatelessWidget {
 
   bool get _canCall =>
       calleeId.isNotEmpty &&
-      allowedCallTypes.any((t) => t == 'voice' || t == 'video');
+      (allowedCallTypes.contains('voice') ||
+          allowedCallTypes.contains('video'));
 
   @override
   Widget build(BuildContext context) {
@@ -134,6 +141,7 @@ class CallPrimaryButton extends StatelessWidget {
     final IconData icon = canVideo ? Icons.videocam : Icons.call;
     return FilledButton.icon(
       onPressed: () async {
+        debugPrint('[CallPrimaryButton] onPressed: calleeId=$calleeId type=$type');
         try {
           await CallService.instance.startOutgoingCall(
             calleeId: calleeId,
@@ -143,6 +151,7 @@ class CallPrimaryButton extends StatelessWidget {
           await Navigator.of(context).pushNamed('/call/active');
         } catch (error) {
           if (!context.mounted) return;
+          debugPrint('[CallPrimaryButton] onPressed error: $error');
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text(error.toString())),
           );

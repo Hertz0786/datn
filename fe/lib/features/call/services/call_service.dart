@@ -58,10 +58,17 @@ class CallService extends ChangeNotifier {
   /// times. Idempotent.
   Future<void> ensureInitialized() async {
     if (_engine != null) return;
-    if (_isInitializing) return;
+    if (_isInitializing) {
+      // Wait for the concurrent initialization to finish before returning.
+      while (_isInitializing) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+      return;
+    }
     _isInitializing = true;
     try {
       if (AppConfig.agoraAppId.isEmpty) {
+        _isInitializing = false;
         throw StateError(
           'AGORA_APP_ID is not configured. Add it to fe/.env first.',
         );
@@ -94,6 +101,11 @@ class CallService extends ChangeNotifier {
           },
         ),
       );
+    } catch (error) {
+      debugPrint('[CallService] ensureInitialized failed: $error');
+      _engine?.release();
+      _engine = null;
+      rethrow;
     } finally {
       _isInitializing = false;
     }
@@ -130,8 +142,13 @@ class CallService extends ChangeNotifier {
     required String calleeId,
     required String callType,
   }) async {
+    debugPrint('[CallService] startOutgoingCall: calleeId=$calleeId type=$callType');
+    debugPrint('[CallService] _engine=$_engine _isInitializing=$_isInitializing');
     await ensureInitialized();
+    debugPrint('[CallService] ensureInitialized done, engine=$_engine');
+
     await _requestPermissions(callType);
+    debugPrint('[CallService] permissions granted, setting state to initiating');
 
     _setState(CallState.initiating);
     _errorMessage = null;
@@ -141,11 +158,14 @@ class CallService extends ChangeNotifier {
         calleeId: calleeId,
         callType: callType,
       );
+      debugPrint('[CallService] initCall response: $data');
       final CallSession session = CallSession.fromJson(data);
       _activeSession = session;
       _setState(CallState.ringing);
+      debugPrint('[CallService] session created, state=ringing');
       return session;
     } catch (error) {
+      debugPrint('[CallService] initCall error: $error');
       _setError(_readMessage(error));
       rethrow;
     }
