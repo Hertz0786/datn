@@ -1,6 +1,11 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
-import 'package:just_audio/just_audio.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:just_audio/just_audio.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:record/record.dart';
 
 import '../../app/app_theme.dart';
 import '../../core/models/chat_message.dart';
@@ -21,7 +26,6 @@ import '../../features/feed/post_detail_screen.dart';
 import '../../shared/widgets/media_preview_grid.dart';
 import '../../shared/widgets/skeleton_views.dart';
 import '../../shared/widgets/user_avatar.dart';
-import '../../shared/widgets/voice_recorder_widget.dart';
 import 'sticker_picker_screen.dart';
 import 'moderation_alert_dialog.dart';
 import 'widgets/call_banner.dart';
@@ -56,6 +60,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ImagePicker _picker = ImagePicker();
   final List<XFile> _pickedMedia = <XFile>[];
+  final ScrollController _messageScrollController = ScrollController();
   bool _isLoading = false;
   bool _isSending = false;
   bool _isUpdatingGroup = false;
@@ -102,6 +107,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       'chat:message_updated',
       _handleRealtimeMessageUpdated,
     );
+    _messageScrollController.dispose();
     _messageController.dispose();
     super.dispose();
   }
@@ -114,6 +120,37 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         'chat:message_updated',
         _handleRealtimeMessageUpdated,
       );
+    }
+  }
+
+  void _scrollToLatest({bool animate = false}) {
+    if (!_messageScrollController.hasClients) {
+      return;
+    }
+    // The list is laid out top→bottom with the newest message at the
+    // bottom, so jump to maxScrollExtent to keep the latest message
+    // visible when the conversation grows.
+    final double target = _messageScrollController.position.maxScrollExtent;
+    if (!animate) {
+      _messageScrollController.jumpTo(target);
+      return;
+    }
+    _messageScrollController.animateTo(
+      target,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  Future<void> _markChatRead() async {
+    final String? id = widget.chatId;
+    if (id == null || id.isEmpty) {
+      return;
+    }
+    try {
+      await ChatsApi.instance.markChatRead(id);
+    } catch (_) {
+      // Read receipts are best-effort — never block the UI on the result.
     }
   }
 
@@ -134,6 +171,15 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       }
 
       setState(() => _messages = page.items);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        _scrollToLatest();
+      });
+      // Opening a chat counts as "read" for every message inside it.
+      // Backend routes /:chatId/read handle the rest.
+      unawaited(_markChatRead());
     } on ApiException catch (error) {
       if (!mounted) {
         return;
@@ -213,6 +259,12 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         _messages = _appendMessage(_messages, sent);
         _messageController.clear();
         _pickedMedia.clear();
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        _scrollToLatest();
       });
     } on ApiException catch (error) {
       if (!mounted) {
@@ -324,6 +376,17 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     setState(() {
       _messages = _appendMessage(_messages, message);
     });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _scrollToLatest();
+    });
+    // Incoming message from another member — count as read because the
+    // user is actively viewing this chat.
+    if (message.senderId != _myId) {
+      unawaited(_markChatRead());
+    }
   }
 
   void _handleRealtimeMessageUpdated(dynamic payload) {
@@ -700,6 +763,94 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     ).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  Future<void> _showAttachmentSheet(BuildContext context) async {
+    final result = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: context.appSurface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _AttachmentOption(
+                      icon: Icons.photo_library_rounded,
+                      label: 'Photo',
+                      color: const Color(0xFF33B8FF),
+                      onTap: () => Navigator.pop(ctx, 'photo'),
+                    ),
+                    _AttachmentOption(
+                      icon: Icons.videocam_rounded,
+                      label: 'Video',
+                      color: const Color(0xFF7A5CFF),
+                      onTap: () => Navigator.pop(ctx, 'video'),
+                    ),
+                    _AttachmentOption(
+                      icon: Icons.mic_rounded,
+                      label: 'Record',
+                      color: const Color(0xFFFF9AD5),
+                      onTap: () => Navigator.pop(ctx, 'record'),
+                    ),
+                    _AttachmentOption(
+                      icon: Icons.emoji_emotions_rounded,
+                      label: 'React',
+                      color: const Color(0xFFFFC857),
+                      onTap: () => Navigator.pop(ctx, 'react'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (result == null || !mounted) return;
+
+    switch (result) {
+      case 'photo':
+        _pickMedia(video: false);
+        break;
+      case 'video':
+        _pickMedia(video: true);
+        break;
+      case 'record':
+        _startVoiceRecording();
+        break;
+      case 'react':
+        final String? code = await Navigator.push<String>(
+          context,
+          MaterialPageRoute(builder: (_) => const StickerPickerScreen()),
+        );
+        if (code == null || code.isEmpty || !mounted) return;
+        setState(() {
+          _messageController.text = code;
+        });
+        await _sendMessage();
+        break;
+    }
+  }
+
+  void _startVoiceRecording() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => _VoiceRecorderSheet(
+        onRecorded: (path, _) => _sendMessage(voicePath: path),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final String myId = _myId;
@@ -759,6 +910,8 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                 : RefreshIndicator(
                     onRefresh: _loadMessages,
                     child: ListView.builder(
+                      controller: _messageScrollController,
+                      reverse: false,
                       physics: const AlwaysScrollableScrollPhysics(),
                       padding: const EdgeInsets.all(20),
                       itemCount: _messages.length,
@@ -817,37 +970,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                     IconButton(
                       onPressed: _isSending
                           ? null
-                          : () async {
-                              final String? code = await Navigator.push<String>(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => const StickerPickerScreen(),
-                                ),
-                              );
-                              if (code == null || code.isEmpty || !mounted) {
-                                return;
-                              }
-                              setState(() {
-                                _messageController.text = code;
-                              });
-                              await _sendMessage();
-                            },
-                      icon: const Icon(Icons.emoji_emotions_outlined),
+                          : () => _showAttachmentSheet(context),
+                      icon: const Icon(Icons.add_circle_outline_rounded),
                       color: const Color(0xFF33B8FF),
-                    ),
-                    IconButton(
-                      onPressed: _isSending
-                          ? null
-                          : () => _pickMedia(video: false),
-                      icon: const Icon(Icons.photo_library_rounded),
-                      color: const Color(0xFF33B8FF),
-                    ),
-                    IconButton(
-                      onPressed: _isSending
-                          ? null
-                          : () => _pickMedia(video: true),
-                      icon: const Icon(Icons.video_library_rounded),
-                      color: const Color(0xFF7A5CFF),
+                      tooltip: 'More options',
                     ),
                     Expanded(
                       child: TextField(
@@ -863,18 +989,6 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                           ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 4),
-                    VoiceRecorderWidget(
-                      compact: true,
-                      onUploading: () {
-                        if (mounted) {
-                          setState(() => _isSending = true);
-                        }
-                      },
-                      onRecorded: (path, _) {
-                        _sendMessage(voicePath: path);
-                      },
                     ),
                     const SizedBox(width: 8),
                     CircleAvatar(
@@ -1597,6 +1711,235 @@ class _ChatSkeletonList extends StatelessWidget {
         ChatMessageSkeleton(isMe: true),
         ChatMessageSkeleton(isMe: true),
       ],
+    );
+  }
+}
+
+class _AttachmentOption extends StatelessWidget {
+  const _AttachmentOption({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.15),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, color: color, size: 26),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _VoiceRecorderSheet extends StatefulWidget {
+  const _VoiceRecorderSheet({required this.onRecorded});
+
+  final void Function(String path, int seconds) onRecorded;
+
+  @override
+  State<_VoiceRecorderSheet> createState() => _VoiceRecorderSheetState();
+}
+
+class _VoiceRecorderSheetState extends State<_VoiceRecorderSheet>
+    with SingleTickerProviderStateMixin {
+  final AudioRecorder _recorder = AudioRecorder();
+  Timer? _timer;
+  int _recordedSeconds = 0;
+  bool _isRecording = false;
+  String? _recordedPath;
+  late AnimationController _pulseController;
+  late Animation<double> _pulseAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    )..repeat(reverse: true);
+    _pulseAnimation = Tween<double>(begin: 1.0, end: 1.3).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
+    _startRecording();
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _pulseController.dispose();
+    _recorder.dispose();
+    super.dispose();
+  }
+
+  Future<void> _startRecording() async {
+    try {
+      final bool hasPermission = await _recorder.hasPermission();
+      if (!hasPermission) {
+        if (mounted) Navigator.pop(context);
+        return;
+      }
+      final String dir = (await getTemporaryDirectory()).path;
+      final String path = '$dir/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      await _recorder.start(
+        const RecordConfig(encoder: AudioEncoder.aacLc, bitRate: 128000, sampleRate: 44100),
+        path: path,
+      );
+      if (mounted) {
+        setState(() {
+          _isRecording = true;
+          _recordedSeconds = 0;
+          _recordedPath = path;
+        });
+      }
+      _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) setState(() => _recordedSeconds++);
+      });
+    } catch (e) {
+      if (mounted) Navigator.pop(context);
+    }
+  }
+
+  Future<void> _stopAndConfirm() async {
+    _timer?.cancel();
+    try {
+      final String? path = await _recorder.stop();
+      if (path == null || !mounted) {
+        Navigator.pop(context);
+        return;
+      }
+      Navigator.pop(context);
+      widget.onRecorded(path, _recordedSeconds);
+    } catch (e) {
+      if (mounted) Navigator.pop(context);
+    }
+  }
+
+  Future<void> _cancel() async {
+    _timer?.cancel();
+    await _recorder.stop();
+    if (_recordedPath != null) {
+      final file = File(_recordedPath!);
+      if (file.existsSync()) {
+        try { file.deleteSync(); } catch (_) {}
+      }
+    }
+    if (mounted) Navigator.pop(context);
+  }
+
+  String _formatDuration(int seconds) {
+    final int m = seconds ~/ 60;
+    final int s = seconds % 60;
+    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
+      decoration: BoxDecoration(
+        color: context.appSurface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          AnimatedBuilder(
+            animation: _pulseAnimation,
+            builder: (_, _) {
+              return AnimatedContainer(
+                duration: const Duration(milliseconds: 300),
+                width: 72,
+                height: 72,
+                decoration: BoxDecoration(
+                  color: _isRecording ? Colors.red.shade50 : const Color(0xFFEEF6FF),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: _isRecording ? Colors.red : const Color(0xFF33B8FF),
+                    width: 2,
+                  ),
+                  boxShadow: _isRecording
+                        ? [
+                          BoxShadow(
+                            color: Colors.red.withValues(alpha: 0.3 * _pulseAnimation.value),
+                            blurRadius: 16 * _pulseAnimation.value,
+                          ),
+                        ]
+                      : null,
+                ),
+                child: IconButton(
+                  icon: Icon(
+                    _isRecording ? Icons.stop_rounded : Icons.mic_rounded,
+                    size: 32,
+                    color: _isRecording ? Colors.red : const Color(0xFF33B8FF),
+                  ),
+                  onPressed: _isRecording ? _stopAndConfirm : _startRecording,
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 16),
+          Text(
+            _isRecording ? _formatDuration(_recordedSeconds) : 'Tap to start',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+              color: _isRecording ? Colors.red : const Color(0xFF1A3D7C),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _isRecording ? 'Recording... Tap stop to send' : 'Voice message',
+            style: const TextStyle(fontSize: 13, color: Color(0xFF7A8BBF)),
+          ),
+          const SizedBox(height: 20),
+          if (_isRecording)
+            TextButton.icon(
+              onPressed: _cancel,
+              icon: const Icon(Icons.close_rounded, color: Color(0xFF7A8BBF)),
+              label: const Text(
+                'Cancel',
+                style: TextStyle(color: Color(0xFF7A8BBF)),
+              ),
+            )
+          else
+            TextButton.icon(
+              onPressed: _cancel,
+              icon: const Icon(Icons.close_rounded, color: Color(0xFF7A8BBF)),
+              label: const Text(
+                'Discard',
+                style: TextStyle(color: Color(0xFF7A8BBF)),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/services/realtime_service.dart';
 import '../../core/session/auth_session.dart';
 import '../onboarding/onboarding_flow_screen.dart';
+import 'change_password_screen.dart';
 import 'support_chat_screen.dart';
 
 class ProfileSettingsScreen extends StatelessWidget {
@@ -60,8 +61,9 @@ class ProfileSettingsScreen extends StatelessWidget {
         children: [
           _SettingsTile(
             icon: Icons.support_agent_rounded,
-            title: 'Contact admin support',
-            subtitle: 'Chat with an admin about safety, bugs, or account help.',
+            title: 'Contact admin & safety help',
+            subtitle:
+                'Chat with an admin about safety, bugs, or account help.',
             color: const Color(0xFFBEEAFF),
             onTap: () {
               Navigator.push(
@@ -72,14 +74,17 @@ class ProfileSettingsScreen extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           _SettingsTile(
-            icon: Icons.shield_rounded,
-            title: 'Safety help',
-            subtitle: 'If something feels wrong, tell an admin right away.',
-            color: const Color(0xFFFFE59E),
-            onTap: () {
-              Navigator.push(
+            icon: Icons.password_rounded,
+            title: 'Change password',
+            subtitle:
+                'We will send a 6-digit code to the email on your account.',
+            color: const Color(0xFFD7F8E9),
+            onTap: () async {
+              await Navigator.push(
                 context,
-                MaterialPageRoute(builder: (_) => const SupportChatScreen()),
+                MaterialPageRoute(
+                  builder: (_) => const ChangePasswordScreen(),
+                ),
               );
             },
           ),

@@ -46,9 +46,7 @@ export default function AdminLayout({ activePage, onNavigate, children, onLogout
           <div className="topbar-actions">
             <span className="topbar-user">
               {adminUser?.displayName || adminUser?.username || 'Admin'}
-              {adminUser?.role && <small> · {adminUser.role}</small>}
             </span>
-            <span className="live-pill">Live monitoring</span>
             <button className="ghost-button" onClick={onLogout}>Logout</button>
           </div>
         </header>

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../app/scaffold_with_bottom_nav.dart';
 import '../../core/models/friend_request_item.dart';
 import '../../core/models/public_user.dart';
 import '../../core/network/api_exception.dart';
@@ -203,11 +204,18 @@ class _FriendListScreenState extends State<FriendListScreen> {
   }
 
   Future<void> _acceptRequest(FriendRequestItem request) async {
+    final String requesterName = _resolveSender(request).displayName.isNotEmpty
+        ? _resolveSender(request).displayName
+        : 'Friend request';
     try {
       await FriendsApi.instance.updateRequest(
         requestId: request.id,
         action: 'accept',
       );
+      if (!mounted) {
+        return;
+      }
+      _showSnack('You and $requesterName are now friends.');
     } on ApiException catch (error) {
       if (!mounted) {
         await _loadData();
@@ -215,13 +223,9 @@ class _FriendListScreenState extends State<FriendListScreen> {
       }
       final String msg = error.message.toLowerCase();
       if (msg.contains('already')) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Friend request already accepted.')),
-        );
+        _showSnack('Friend request already accepted.');
       } else {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
+        _showSnack(error.message);
       }
       await _loadData();
       return;
@@ -229,20 +233,25 @@ class _FriendListScreenState extends State<FriendListScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Accept request failed: $error')));
+      _showSnack('Accept request failed: $error');
       return;
     }
     await _loadData();
   }
 
   Future<void> _rejectRequest(FriendRequestItem request) async {
+    final String requesterName = _resolveSender(request).displayName.isNotEmpty
+        ? _resolveSender(request).displayName
+        : 'Friend request';
     try {
       await FriendsApi.instance.updateRequest(
         requestId: request.id,
         action: 'reject',
       );
+      if (!mounted) {
+        return;
+      }
+      _showSnack('Friend request from $requesterName declined.');
     } on ApiException catch (error) {
       if (!mounted) {
         await _loadData();
@@ -250,13 +259,9 @@ class _FriendListScreenState extends State<FriendListScreen> {
       }
       final String msg = error.message.toLowerCase();
       if (msg.contains('already')) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Friend request already processed.')),
-        );
+        _showSnack('Friend request already processed.');
       } else {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
+        _showSnack(error.message);
       }
       await _loadData();
       return;
@@ -264,12 +269,19 @@ class _FriendListScreenState extends State<FriendListScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Reject request failed: $error')));
+      _showSnack('Reject request failed: $error');
       return;
     }
     await _loadData();
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _openChat(PublicUser user) async {
@@ -401,16 +413,18 @@ class _FriendListScreenState extends State<FriendListScreen> {
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (_) => FriendProfileScreen(
-                                  userId: sender.id,
-                                  name: sender.displayName,
-                                  age: sender.age,
-                                  favoriteTopic: sender
-                                          .favoriteTopics.isEmpty
-                                      ? 'Drawing'
-                                      : sender.favoriteTopics.first,
-                                  avatarLabel: sender.initials,
-                                  avatarUrl: sender.avatarUrl,
+                                builder: (_) => PushedScreenShell(
+                                  child: FriendProfileScreen(
+                                    userId: sender.id,
+                                    name: sender.displayName,
+                                    age: sender.age,
+                                    favoriteTopic: sender
+                                            .favoriteTopics.isEmpty
+                                        ? 'Drawing'
+                                        : sender.favoriteTopics.first,
+                                    avatarLabel: sender.initials,
+                                    avatarUrl: sender.avatarUrl,
+                                  ),
                                 ),
                               ),
                             );
@@ -458,15 +472,17 @@ class _FriendListScreenState extends State<FriendListScreen> {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (_) => FriendProfileScreen(
-                                userId: user.id,
-                                name: user.displayName,
-                                age: user.age,
-                                favoriteTopic: user.favoriteTopics.isEmpty
-                                    ? 'Music'
-                                    : user.favoriteTopics.first,
-                                avatarLabel: user.initials,
-                                avatarUrl: user.avatarUrl,
+                              builder: (_) => PushedScreenShell(
+                                child: FriendProfileScreen(
+                                  userId: user.id,
+                                  name: user.displayName,
+                                  age: user.age,
+                                  favoriteTopic: user.favoriteTopics.isEmpty
+                                      ? 'Music'
+                                      : user.favoriteTopics.first,
+                                  avatarLabel: user.initials,
+                                  avatarUrl: user.avatarUrl,
+                                ),
                               ),
                             ),
                           );

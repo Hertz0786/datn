@@ -291,7 +291,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 Navigator.push(
                                   context,
                                   MaterialPageRoute(
-                                    builder: (_) => const GroupListScreen(),
+                                    builder: (_) => const GroupListScreen(
+                                      initialScope: GroupScope.joined,
+                                    ),
                                   ),
                                 );
                               },

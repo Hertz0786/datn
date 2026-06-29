@@ -27,6 +27,25 @@ class NotificationsApi {
     await _api.patch('/api/notifications/$notificationId/read');
   }
 
+  Future<void> deleteNotification(String notificationId) async {
+    await _api.delete('/api/notifications/$notificationId');
+  }
+
+  Future<int> deleteNotifications(List<String> notificationIds) async {
+    final dynamic response = await _api.delete(
+      '/api/notifications',
+      body: <String, dynamic>{'ids': notificationIds},
+    );
+    final data = _toMap(response);
+    return (data['deletedCount'] as int?) ?? 0;
+  }
+
+  Future<int> deleteAllNotifications() async {
+    final dynamic response = await _api.delete('/api/notifications');
+    final data = _toMap(response);
+    return (data['deletedCount'] as int?) ?? 0;
+  }
+
   Map<String, dynamic> _toMap(dynamic value) {
     if (value is Map<String, dynamic>) {
       return value;

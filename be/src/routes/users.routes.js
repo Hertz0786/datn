@@ -52,6 +52,20 @@ router.patch(
       return res.status(400).json({ message: 'favoriteTopics must be an array.' });
     }
 
+    if (update.favoriteTopics) {
+      const ALLOWED_TOPICS = [
+        'Drawing', 'Science', 'Music', 'Coding',
+        'Sports', 'Story', 'Math', 'Reading',
+      ];
+      const invalid = update.favoriteTopics
+        .filter((t) => !ALLOWED_TOPICS.includes(t));
+      if (invalid.length > 0) {
+        return res.status(400).json({
+          message: `Invalid topics: "${invalid.join(', ')}". Allowed topics are: ${ALLOWED_TOPICS.join(', ')}.`,
+        });
+      }
+    }
+
     const user = await User.findByIdAndUpdate(
       req.user.id,
       { $set: update },

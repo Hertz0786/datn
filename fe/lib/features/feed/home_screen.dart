@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../app/scaffold_with_bottom_nav.dart';
 import '../../core/models/feed_post.dart';
 import '../../core/models/public_user.dart';
 import '../../core/network/api_exception.dart';
@@ -29,40 +30,42 @@ import '../groups/group_list_screen.dart';
 import '../safety/community_rules_screen.dart';
 import 'create_post_screen.dart';
 import 'post_detail_screen.dart';
+import 'topic_discovery_screen.dart';
+import 'topic_feed_screen.dart';
 
-enum _FeedScope { all, friends, public }
+enum _FeedScope { _public, friends, group }
 
 extension on _FeedScope {
   String get apiValue {
     switch (this) {
-      case _FeedScope.all:
-        return 'all';
+      case _FeedScope._public:
+        return 'public';
       case _FeedScope.friends:
         return 'friends';
-      case _FeedScope.public:
-        return 'public';
+      case _FeedScope.group:
+        return 'group';
     }
   }
 
   String get label {
     switch (this) {
-      case _FeedScope.all:
-        return 'For you';
+      case _FeedScope._public:
+        return 'Public';
       case _FeedScope.friends:
         return 'Friends';
-      case _FeedScope.public:
-        return 'Public';
+      case _FeedScope.group:
+        return 'Group';
     }
   }
 
   IconData get icon {
     switch (this) {
-      case _FeedScope.all:
-        return Icons.auto_awesome_rounded;
+      case _FeedScope._public:
+        return Icons.public_rounded;
       case _FeedScope.friends:
         return Icons.group_rounded;
-      case _FeedScope.public:
-        return Icons.public_rounded;
+      case _FeedScope.group:
+        return Icons.groups_rounded;
     }
   }
 }
@@ -79,7 +82,7 @@ class _HomeScreenState extends State<HomeScreen> {
   static const int _pageSize = 50;
   static const double _loadMoreThreshold = 600;
 
-  _FeedScope _scope = _FeedScope.all;
+  _FeedScope _scope = _FeedScope._public;
 
   bool _isPostsLoading = true;
   bool _isLoadingMorePosts = false;
@@ -665,13 +668,15 @@ class _HomeScreenState extends State<HomeScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => FriendProfileScreen(
-          userId: authorId,
-          name: name.isEmpty ? 'Friend' : name,
-          age: 0,
-          favoriteTopic: 'Music',
-          avatarLabel: initials,
-          avatarUrl: post.authorAvatarUrl,
+        builder: (_) => PushedScreenShell(
+          child: FriendProfileScreen(
+            userId: authorId,
+            name: name.isEmpty ? 'Friend' : name,
+            age: 0,
+            favoriteTopic: 'Music',
+            avatarLabel: initials,
+            avatarUrl: post.authorAvatarUrl,
+          ),
         ),
       ),
     );
@@ -734,6 +739,7 @@ class _HomeScreenState extends State<HomeScreen> {
             },
             icon: const Icon(Icons.shield_rounded),
             color: const Color(0xFF1A3D7C),
+            tooltip: 'Community rules',
           ),
         ],
       ),
@@ -756,15 +762,16 @@ class _HomeScreenState extends State<HomeScreen> {
             SliverToBoxAdapter(child: _buildScopeTabs()),
             SliverToBoxAdapter(child: _buildNewPostEntry()),
             SliverToBoxAdapter(child: _buildFriendsRow()),
+            SliverToBoxAdapter(child: _buildGroupsBlock()),
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
                 child: SectionHeader(
                   title: _scope == _FeedScope.friends
                       ? 'Friend posts'
-                      : _scope == _FeedScope.public
-                      ? 'Public posts'
-                      : 'New posts',
+                      : _scope == _FeedScope.group
+                      ? 'Group posts'
+                      : 'Public posts',
                   actionText: 'Post',
                   onAction: () {
                     Navigator.push(
@@ -774,12 +781,22 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ).then((_) => _loadPosts());
                   },
+                  trailingIcon: Icons.tag_rounded,
+                  onTrailingTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const TopicDiscoveryScreen(),
+                      ),
+                    );
+                  },
+                  trailingTooltip: 'Topics',
                 ),
               ),
             ),
             const SliverToBoxAdapter(child: SizedBox(height: 8)),
             _buildPostsSliver(),
-            SliverToBoxAdapter(child: _buildGroupsBlock()),
+            SliverToBoxAdapter(child: _buildCaughtUpFooter()),
             const SliverToBoxAdapter(child: SizedBox(height: 24)),
           ],
         ),
@@ -984,14 +1001,16 @@ class _HomeScreenState extends State<HomeScreen> {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => FriendProfileScreen(
-                            userId: friend.id,
-                            name: title,
-                            age: friend.age,
-                            favoriteTopic: topic,
-                            avatarLabel: initials,
-                            avatarColor: const Color(0xFFBEEAFF),
-                            avatarUrl: friend.avatarUrl,
+                          builder: (_) => PushedScreenShell(
+                            child: FriendProfileScreen(
+                              userId: friend.id,
+                              name: title,
+                              age: friend.age,
+                              favoriteTopic: topic,
+                              avatarLabel: initials,
+                              avatarColor: const Color(0xFFBEEAFF),
+                              avatarUrl: friend.avatarUrl,
+                            ),
                           ),
                         ),
                       );
@@ -1068,19 +1087,21 @@ class _HomeScreenState extends State<HomeScreen> {
       return SliverPadding(
         padding: const EdgeInsets.symmetric(horizontal: 20),
         sliver: SliverToBoxAdapter(
-          child: EmptyStateView(
+            child: EmptyStateView(
             icon: _scope == _FeedScope.friends
                 ? Icons.group_outlined
-                : _scope == _FeedScope.public
-                ? Icons.public_off_rounded
-                : Icons.photo_library_outlined,
+                : _scope == _FeedScope.group
+                ? Icons.groups_outlined
+                : Icons.public_off_rounded,
             title: _scope == _FeedScope.friends
                 ? 'No friend posts yet'
-                : _scope == _FeedScope.public
-                ? 'No public posts yet'
-                : 'No posts yet',
+                : _scope == _FeedScope.group
+                ? 'No group posts yet'
+                : 'No public posts yet',
             message: _scope == _FeedScope.friends
                 ? 'Add more friends to see their posts here.'
+                : _scope == _FeedScope.group
+                ? 'Join a group to see posts here.'
                 : 'Be the first to share something fun!',
           ),
         ),
@@ -1121,25 +1142,30 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildCaughtUpFooter() {
+    if (!_hasMorePosts && _posts.isNotEmpty) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Center(
+          child: Text(
+            'You are all caught up.',
+            style: TextStyle(
+              color: const Color(0xFF9AA7C7),
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      );
+    }
+    return const SizedBox.shrink();
+  }
+
   Widget _buildGroupsBlock() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (!_hasMorePosts && _posts.isNotEmpty)
-            const Padding(
-              padding: EdgeInsets.only(bottom: 8),
-              child: Center(
-                child: Text(
-                  'You are all caught up.',
-                  style: TextStyle(
-                    color: Color(0xFF9AA7C7),
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ),
           SectionHeader(
             title: 'Fun groups',
             actionText: 'See more',
@@ -1433,18 +1459,29 @@ class _TopicPill extends StatelessWidget {
   final String label;
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: const Color(0xFFEFF7FF),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
-          color: Color(0xFF1A3D7C),
+    return InkWell(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => TopicFeedScreen(topic: label),
+          ),
+        );
+      },
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: const Color(0xFFEFF7FF),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Text(
+          label,
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF1A3D7C),
+          ),
         ),
       ),
     );

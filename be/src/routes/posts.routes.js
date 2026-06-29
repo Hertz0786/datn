@@ -134,6 +134,10 @@ router.post(
       return res.status(400).json({ message: 'ageMin must be <= ageMax.' });
     }
 
+    const sanitizedTopics = Array.isArray(topics)
+      ? topics.map((t) => String(t).trim().toLowerCase()).filter(Boolean)
+      : [];
+
     let resolvedGroupId = null;
     if (groupId) {
       if (!isValidObjectId(groupId)) {
@@ -191,9 +195,7 @@ router.post(
         avatarUrl: author.avatarUrl,
       },
       content: String(content).trim(),
-      topics: Array.isArray(topics)
-        ? topics.map((item) => String(item).trim()).filter(Boolean)
-        : [],
+      topics: sanitizedTopics,
       mood: String(mood || '').trim(),
       mediaUrls: Array.isArray(mediaUrls)
         ? mediaUrls.map((item) => String(item).trim()).filter(Boolean)
@@ -350,6 +352,9 @@ router.get(
       query.authorId = { $in: [...friendIds] };
     } else if (scope === 'public') {
       query.audience = 'PUBLIC';
+    } else if (scope === 'group') {
+      query.audience = 'GROUP';
+      query.groupId = { $in: myGroupIds };
     }
 
     if (topic) {
@@ -422,6 +427,104 @@ router.get(
       .limit(100);
 
     return res.json({ items: await withPostMeta(posts, req.user.id) });
+  }),
+);
+
+/**
+ * GET /api/posts/by-user/:userId
+ * Returns published posts by a specific user. Only friends of that user
+ * can see their posts; the post author's own posts are always visible.
+ * Respects age range and CHILD/ADULT visibility rules.
+ */
+router.get(
+  '/by-user/:userId',
+  asyncHandler(async (req, res) => {
+    const { userId } = req.params;
+    if (!isValidObjectId(userId)) {
+      return res.status(400).json({ message: 'Invalid userId.' });
+    }
+
+    const targetUser = await User.findById(userId);
+    if (!targetUser || !targetUser.isActive) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    const limit = Math.max(1, Math.min(50, Number(req.query.limit) || 20));
+    const beforeRaw = String(req.query.before || '').trim();
+    const beforeDate = beforeRaw ? new Date(beforeRaw) : null;
+    if (beforeRaw && Number.isNaN(beforeDate.getTime())) {
+      return res.status(400).json({ message: 'Invalid before cursor.' });
+    }
+
+    // Decide which posts are visible to the requester.
+    //   - Self: always see everything
+    //   - Friends: see PUBLIC + FRIENDS (group visibility handled below)
+    //   - Non-friends: only PUBLIC posts of the target
+    // We do NOT 403 here. Friends-only / group posts are filtered out
+    // below so the client can render the rest instead of seeing an error.
+    const isSelf = userId === req.user.id;
+    let isFriend = false;
+    if (!isSelf) {
+      const pair = normalizeFriendPair(req.user.id, userId);
+      const friendship = await Friendship.findOne(pair);
+      isFriend = !!friendship;
+    }
+
+    const myGroupIds = isFriend
+      ? await GroupMember.find({
+          userId: req.user.id,
+          status: 'ACTIVE',
+        }).distinct('groupId')
+      : [];
+    const myGroupIdsCache = new Set(myGroupIds.map((id) => id.toString()));
+
+    const query = {
+      authorId: userId,
+      status: 'PUBLISHED',
+    };
+    if (beforeDate) {
+      query.createdAt = { $lt: beforeDate };
+    }
+
+    let posts = await Post.find(query)
+      .sort({ createdAt: -1 })
+      .limit(limit + 1);
+
+    posts = posts.filter((post) => {
+      if (isSelf) {
+        return true;
+      }
+      if (post.audience === 'PUBLIC') {
+        return true;
+      }
+      if (!isFriend) {
+        return false;
+      }
+      if (post.audience === 'FRIENDS') {
+        return true;
+      }
+      if (post.audience === 'GROUP') {
+        const groupId = post.groupId ? post.groupId.toString() : '';
+        if (!groupId) {
+          return false;
+        }
+        return myGroupIdsCache.has(groupId);
+      }
+      return false;
+    });
+
+    const childAuthorPosts = await filterNonChildAuthorPosts(posts, req.user);
+    const hasMore = childAuthorPosts.length > limit;
+    const page = hasMore ? childAuthorPosts.slice(0, limit) : childAuthorPosts;
+    const nextBefore = hasMore
+      ? new Date(page[page.length - 1].createdAt).toISOString()
+      : null;
+
+    return res.json({
+      items: await withPostMeta(page, req.user.id),
+      nextBefore,
+      hasMore,
+    });
   }),
 );
 
@@ -746,6 +849,71 @@ router.get(
   }),
 );
 
+/**
+ * GET /api/posts/bookmarks/:userId
+ * Returns posts bookmarked by a specific user. Only visible if the
+ * requesting user is friends with the target user.
+ */
+router.get(
+  '/bookmarks/:userId',
+  asyncHandler(async (req, res) => {
+    const { userId } = req.params;
+    if (!isValidObjectId(userId)) {
+      return res.status(400).json({ message: 'Invalid userId.' });
+    }
+
+    const targetUser = await User.findById(userId);
+    if (!targetUser || !targetUser.isActive) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    // Only the user themselves or their friends can see their bookmarks.
+    if (userId !== req.user.id) {
+      const pair = normalizeFriendPair(req.user.id, userId);
+      const friendship = await Friendship.findOne(pair);
+      if (!friendship) {
+        return res.status(403).json({ message: 'You must be friends to view their bookmarks.' });
+      }
+    }
+
+    const limit = Math.max(1, Math.min(50, Number(req.query.limit) || 20));
+    const beforeRaw = String(req.query.before || '').trim();
+    const beforeDate = beforeRaw ? new Date(beforeRaw) : null;
+    if (beforeRaw && Number.isNaN(beforeDate.getTime())) {
+      return res.status(400).json({ message: 'Invalid before cursor.' });
+    }
+
+    const query = { userId };
+    if (beforeDate) {
+      query.createdAt = { $lt: beforeDate };
+    }
+
+    const bookmarks = await PostBookmark.find(query)
+      .sort({ createdAt: -1 })
+      .limit(limit + 1);
+    const hasMore = bookmarks.length > limit;
+    const page = hasMore ? bookmarks.slice(0, limit) : bookmarks;
+
+    if (page.length === 0) {
+      return res.json({ items: [], nextBefore: null, hasMore: false });
+    }
+
+    const postIds = page.map((b) => b.postId);
+    const posts = await Post.find({ _id: { $in: postIds } });
+    const enriched = await withPostMeta(posts, req.user.id);
+
+    const ordered = postIds
+      .map((id) => enriched.find((p) => p._id.toString() === id.toString()))
+      .filter(Boolean);
+
+    const nextBefore = hasMore
+      ? new Date(page[page.length - 1].createdAt).toISOString()
+      : null;
+
+    return res.json({ items: ordered, nextBefore, hasMore });
+  }),
+);
+
 router.get(
   '/:postId',
   asyncHandler(async (req, res) => {
@@ -875,6 +1043,105 @@ router.delete(
     emitGlobal('feed:changed', { reason: 'post_deleted', postId });
 
     return res.json({ message: 'Post deleted (soft delete).' });
+  }),
+);
+
+/**
+ * GET /api/posts/topics/trending
+ * Returns trending topics ordered by usage (public posts only, no time limit).
+ * postCount reflects how many PUBLIC posts use each topic, so it always
+ * matches what the topic feed will return for a logged-out/anonymous user.
+ */
+router.get(
+  '/topics/trending',
+  asyncHandler(async (req, res) => {
+    const limit = Math.max(1, Math.min(50, Number(req.query.limit) || 10));
+
+    const results = await Post.aggregate([
+      {
+        $match: {
+          status: 'PUBLISHED',
+          audience: 'PUBLIC',
+          topics: { $exists: true, $ne: [] },
+        },
+      },
+      { $unwind: '$topics' },
+      {
+        $group: {
+          _id: { $toLower: '$topics' },
+          count: { $sum: 1 },
+        },
+      },
+      { $sort: { count: -1 } },
+      { $limit: limit },
+      {
+        $project: {
+          _id: 0,
+          topic: '$_id',
+          postCount: '$count',
+        },
+      },
+    ]);
+
+    const topics = results.map((r) => ({
+      topic: r.topic.charAt(0).toUpperCase() + r.topic.slice(1),
+      postCount: r.postCount,
+    }));
+
+    return res.json({ topics });
+  }),
+);
+
+/**
+ * GET /api/posts/topics/:topic/feed
+ * Returns published posts filtered by topic (no age guard so discovery works).
+ */
+router.get(
+  '/topics/:topic/feed',
+  asyncHandler(async (req, res) => {
+    const { topic } = req.params;
+    const decodedTopic = decodeURIComponent(topic);
+    const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 20));
+    const beforeRaw = String(req.query.before || '').trim();
+    const beforeDate = beforeRaw ? new Date(beforeRaw) : null;
+    if (beforeRaw && Number.isNaN(beforeDate.getTime())) {
+      return res.status(400).json({ message: 'Invalid before cursor.' });
+    }
+
+    const friendIds = await getFriendSet(req.user.id);
+    friendIds.add(req.user.id);
+    const myGroupIds = await GroupMember.find({
+      userId: req.user.id,
+      status: 'ACTIVE',
+    }).distinct('groupId');
+
+    const escaped = decodedTopic.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const query = {
+      status: 'PUBLISHED',
+      audience: 'PUBLIC',
+      topics: { $regex: `^${escaped}$`, $options: 'i' },
+    };
+
+    if (beforeDate) {
+      query.createdAt = { $lt: beforeDate };
+    }
+
+    const posts = await Post.find(query)
+      .sort({ createdAt: -1 })
+      .limit(limit + 1);
+
+    const enriched = await withPostMeta(posts, req.user.id);
+
+    const hasMore = enriched.length > limit;
+    const items = hasMore ? enriched.slice(0, limit) : enriched;
+
+    return res.json({
+      items,
+      hasMore,
+      nextBefore: hasMore && items.length > 0
+        ? items[items.length - 1].createdAt.toISOString()
+        : null,
+    });
   }),
 );
 

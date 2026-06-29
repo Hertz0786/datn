@@ -194,6 +194,16 @@ class ChatsApi {
     );
   }
 
+  /// Mark every currently-unread message in [chatId] as read for the
+  /// authenticated user. Idempotent — calling again after all messages
+  /// are already read is a no-op on the server.
+  Future<void> markChatRead(String chatId) async {
+    if (chatId.isEmpty) {
+      return;
+    }
+    await _api.post('/api/chats/$chatId/read');
+  }
+
   Map<String, dynamic> _toMap(dynamic value) {
     if (value is Map<String, dynamic>) {
       return value;

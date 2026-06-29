@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../app/scaffold_with_bottom_nav.dart';
 import '../../core/models/public_user.dart';
 import '../../core/network/api_exception.dart';
 import '../../core/services/friends_api.dart';
@@ -120,15 +121,17 @@ class _UserFriendsScreenState extends State<UserFriendsScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => FriendProfileScreen(
-          userId: user.id,
-          name: user.displayName,
-          age: user.age,
-          favoriteTopic: user.favoriteTopics.isEmpty
-              ? 'Music'
-              : user.favoriteTopics.first,
-          avatarLabel: user.initials,
-          avatarUrl: user.avatarUrl,
+        builder: (_) => PushedScreenShell(
+          child: FriendProfileScreen(
+            userId: user.id,
+            name: user.displayName,
+            age: user.age,
+            favoriteTopic: user.favoriteTopics.isEmpty
+                ? 'Music'
+                : user.favoriteTopics.first,
+            avatarLabel: user.initials,
+            avatarUrl: user.avatarUrl,
+          ),
         ),
       ),
     );

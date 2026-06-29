@@ -33,7 +33,6 @@ export default function LoginPage({ onLogin }) {
           <input
             value={username}
             onChange={(event) => setUsername(event.target.value)}
-            placeholder="admin or admin_kiddo"
             autoComplete="username"
             required
           />
@@ -44,7 +43,6 @@ export default function LoginPage({ onLogin }) {
             type="password"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            placeholder="Your password"
             autoComplete="current-password"
             required
           />

@@ -13,6 +13,7 @@ class ChatSummary {
     required this.memberCount,
     required this.createdBy,
     required this.updatedAt,
+    this.unreadCount = 0,
     this.otherUser,
     this.lastMessage,
   });
@@ -29,6 +30,13 @@ class ChatSummary {
   final DateTime? updatedAt;
   final PublicUser? otherUser;
   final ChatMessage? lastMessage;
+
+  /// Number of messages from other members that the current user has not
+  /// read yet. Server-computed; falls back to 0 if the backend version
+  /// does not yet expose it.
+  final int unreadCount;
+
+  bool get hasUnread => unreadCount > 0;
 
   bool get isMessageGroup => type.toUpperCase() == 'GROUP';
   bool get isSocialGroup => type.toUpperCase() == 'SOCIAL_GROUP';
@@ -55,6 +63,7 @@ class ChatSummary {
       updatedAt: json['updatedAt'] != null
           ? DateTime.tryParse(json['updatedAt'].toString())
           : null,
+      unreadCount: (json['unreadCount'] as num?)?.toInt() ?? 0,
       otherUser: json['otherUser'] is Map<String, dynamic>
           ? PublicUser.fromJson(json['otherUser'] as Map<String, dynamic>)
           : null,
@@ -73,6 +82,7 @@ class ChatSummary {
     int? memberCount,
     String? createdBy,
     DateTime? updatedAt,
+    int? unreadCount,
     PublicUser? otherUser,
     ChatMessage? lastMessage,
   }) {
@@ -87,6 +97,7 @@ class ChatSummary {
       memberCount: memberCount ?? this.memberCount,
       createdBy: createdBy ?? this.createdBy,
       updatedAt: updatedAt ?? this.updatedAt,
+      unreadCount: unreadCount ?? this.unreadCount,
       otherUser: otherUser ?? this.otherUser,
       lastMessage: lastMessage ?? this.lastMessage,
     );

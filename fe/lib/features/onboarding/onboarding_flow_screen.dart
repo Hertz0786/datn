@@ -72,44 +72,46 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
                   final page = _pages[index];
                   return Padding(
                     padding: const EdgeInsets.all(24),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: TextButton(
-                            onPressed: () {
-                              Navigator.pushReplacement(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => const WelcomeScreen(),
-                                ),
-                              );
-                            },
-                            child: const Text('Skip'),
+                    child: SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: TextButton(
+                              onPressed: () {
+                                Navigator.pushReplacement(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => const WelcomeScreen(),
+                                  ),
+                                );
+                              },
+                              child: const Text('Skip'),
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 10),
-                        _HeroCard(page: page),
-                        const SizedBox(height: 24),
-                        Text(
-                          page.title,
-                          style: const TextStyle(
-                            fontSize: 26,
-                            fontWeight: FontWeight.w800,
-                            color: Color(0xFF1A3D7C),
+                          const SizedBox(height: 10),
+                          _HeroCard(page: page),
+                          const SizedBox(height: 24),
+                          Text(
+                            page.title,
+                            style: const TextStyle(
+                              fontSize: 26,
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFF1A3D7C),
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 10),
-                        Text(
-                          page.description,
-                          style: const TextStyle(
-                            fontSize: 15,
-                            height: 1.5,
-                            color: Color(0xFF3A5A8A),
+                          const SizedBox(height: 10),
+                          Text(
+                            page.description,
+                            style: const TextStyle(
+                              fontSize: 15,
+                              height: 1.5,
+                              color: Color(0xFF3A5A8A),
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   );
                 },

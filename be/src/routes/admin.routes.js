@@ -1,5 +1,6 @@
 const express = require('express');
 
+const env = require('../config/env');
 const AuditLog = require('../models/AuditLog');
 const AppSetting = require('../models/AppSetting');
 const Chat = require('../models/Chat');
@@ -683,11 +684,15 @@ router.get(
   '/dashboard',
   asyncHandler(async (req, res) => {
     const sinceToday = nowMinus(24 * 60 * 60 * 1000);
+    const since7d = nowMinus(7 * 24 * 60 * 60 * 1000);
+
     const [
       activeChildren,
       postsToday,
       openReports,
       flaggedMessages,
+      pendingFlags,
+      flagged30d,
       topReports,
       flaggedPosts,
       watchedUsers,
@@ -704,6 +709,8 @@ router.get(
         status: 'PENDING',
         createdAt: { $gte: sinceToday },
       }),
+      FlaggedContent.countDocuments({ status: 'PENDING' }),
+      FlaggedContent.countDocuments({ createdAt: { $gte: since7d } }),
       // Highest priority reports: unresolved first, most urgent first.
       // We populate the reporter so the UI can show "who flagged this"
       // and aggregate duplicate reports on the same target so the queue
@@ -723,6 +730,8 @@ router.get(
         { label: 'Posts today', value: postsToday, trend: '+0%', tone: 'green' },
         { label: 'Open reports', value: openReports, trend: '+0%', tone: 'orange' },
         { label: 'Flagged messages', value: flaggedMessages, trend: '+0%', tone: 'pink' },
+        { label: 'AI flags pending', value: pendingFlags, trend: '+0%', tone: 'red' },
+        { label: 'AI flags 7d', value: flagged30d, trend: '+0%', tone: 'purple' },
       ],
       topReports,
       flaggedPosts,
@@ -800,6 +809,42 @@ router.patch(
     }
 
     await logAdminAction(req, `Set user status to ${status}`, 'USER', userId);
+
+    // Notify the user when their account is placed on watchlist or suspended.
+    if (status !== 'ACTIVE') {
+      const adminActor = await User.findById(req.user.id).select(
+        'displayName username avatarUrl',
+      );
+      const warnings = {
+        WATCHLIST:
+          'Tài khoản của bạn đã được đặt vào danh sách theo dõi. Vui lòng đảm bảo tuân thủ các quy tắc cộng đồng.',
+        SUSPENDED:
+          'Tài khoản của bạn đã bị tạm ngưng. Vui lòng liên hệ đội ngũ hỗ trợ để biết thêm chi tiết.',
+      };
+      await sendNotification({
+        userId: userId,
+        actorId: req.user.id,
+        type: NOTIFICATION_TYPES.ACCOUNT_WARNING,
+        payload: {
+          moderationStatus: status,
+          message: warnings[status] || '',
+          navigationTarget: {
+            route: 'PROFILE',
+            userId: userId,
+          },
+          ...(adminActor ? {
+            actorName: adminActor.displayName || adminActor.username || 'Đội ngũ Kiddo',
+            actorUsername: adminActor.username || '',
+            actorAvatarUrl: adminActor.avatarUrl || '',
+          } : {}),
+        },
+      });
+      emitToUser(userId, 'account:warning', {
+        moderationStatus: status,
+        message: warnings[status] || '',
+      });
+    }
+
     return res.json({ message: 'User status updated.', user: toPublicUser(user) });
   }),
 );
@@ -891,12 +936,12 @@ router.patch(
     let userMessage = '';
     if (status === 'PUBLISHED') {
       userMessage =
-        'Bài đăng của bạn đã được admin duyệt và hiển thị trên bảng tin.';
+        'Your post was approved by admin and is now visible on the feed.';
     } else if (status === 'DELETED') {
       userMessage =
-        'Bài đăng của bạn đã bị xóa vì chứa hình ảnh không phù hợp.';
+        'Your post was removed because it contains inappropriate imagery.';
     } else {
-      userMessage = 'Bài đăng của bạn đã được đặt lại trạng thái chờ duyệt.';
+      userMessage = 'Your post has been put back into pending review.';
     }
 
     await sendNotification({
@@ -904,7 +949,7 @@ router.patch(
       actorId: req.user.id,
       type: NOTIFICATION_TYPES.POST_MODERATION_DECIDED,
       title:
-        status === 'PUBLISHED' ? 'Bài đăng đã được duyệt' : 'Bài đăng đã bị xóa',
+        status === 'PUBLISHED' ? 'Post approved' : 'Post removed',
       body: userMessage,
       payload: {
         postId: post._id.toString(),
@@ -997,6 +1042,42 @@ router.patch(
       return res.status(404).json({ message: 'Comment not found.' });
     }
 
+    let userMessage = '';
+    if (status === 'PUBLISHED') {
+      userMessage = 'Your comment was approved by admin.';
+    } else if (status === 'DELETED') {
+      userMessage = 'Your comment was removed because it is inappropriate.';
+    } else {
+      userMessage = 'Your comment has been put back into pending review.';
+    }
+
+    await sendNotification({
+      userId: comment.authorId,
+      actorId: req.user.id,
+      type: NOTIFICATION_TYPES.COMMENT_DELETED,
+      title: status === 'PUBLISHED' ? 'Comment approved' : 'Comment moderated',
+      body: userMessage,
+      payload: {
+        commentId: comment._id.toString(),
+        postId: comment.postId.toString(),
+        status,
+        decidedBy: req.user.id,
+        decidedAt: new Date(),
+        navigationTarget: {
+          route: 'POST_DETAIL',
+          postId: comment.postId.toString(),
+        },
+      },
+    });
+
+    emitToUser(comment.authorId.toString(), 'comment:moderation_decided', {
+      commentId: comment._id.toString(),
+      postId: comment.postId.toString(),
+      status,
+      message: userMessage,
+      decidedAt: new Date(),
+    });
+
     await logAdminAction(req, `Set comment status to ${status}`, 'COMMENT', commentId);
     return res.json({ message: 'Comment status updated.', comment });
   }),
@@ -1006,12 +1087,57 @@ router.get(
   '/reports',
   asyncHandler(async (req, res) => {
     const status = String(req.query.status || '').toUpperCase();
+    const sortMode = String(req.query.sort || '').toLowerCase();
+
     const query = status && status !== 'ALL' ? { status } : {};
+
+    // Default sort: surface the freshest *unresolved* reports first.
+    // Without this, a flood of low-urgency reports submitted a moment
+    // ago get buried under months-old urgency-5 reports, which makes
+    // the admin page look "stuck" right after a new report comes in.
+    //
+    // Sort keys:
+    //   - "newest": strict createdAt desc (debugging / forensic view)
+    //   - "oldest": createdAt asc
+    //   - default ("queue"): unresolved first by urgency, then by
+    //     createdAt desc; resolved/dismissed still sortable by recency
+    let sort;
+    if (sortMode === 'newest') {
+      sort = { createdAt: -1 };
+    } else if (sortMode === 'oldest') {
+      sort = { createdAt: 1 };
+    } else {
+      // Mongo can't order by a computed "isOpen" boolean directly via
+      // `.sort({ isOpen: -1 })` because the field doesn't exist on the
+      // doc. Instead we use aggregation to do the bucketing in one
+      // round-trip — but that's heavier than a simple find. For the
+      // 100-row cap we use here, sorting in JS after the find keeps
+      // the code obvious without sacrificing much performance.
+      sort = { createdAt: -1 };
+    }
+
     const reports = await Report.find(query)
-      .sort({ urgency: -1, createdAt: -1 })
+      .sort(sort)
       .limit(100)
       .populate('reporterId', 'displayName username avatarUrl')
       .populate('targetAuthorId', 'displayName username avatarUrl');
+
+    // For the default "queue" mode, bucket unresolved reports on top
+    // so the latest PENDING/REVIEWING always land at the top of the
+    // list. Solved reports still show below sorted by recency.
+    if (sortMode !== 'newest' && sortMode !== 'oldest') {
+      const unresolvedStatuses = new Set(['PENDING', 'REVIEWING']);
+      reports.sort((a, b) => {
+        const aOpen = unresolvedStatuses.has(a.status);
+        const bOpen = unresolvedStatuses.has(b.status);
+        if (aOpen !== bOpen) return aOpen ? -1 : 1;
+        // Within the same bucket, push higher urgency first, then
+        // newer reports first. This keeps the eye-needle queue
+        // behaviour the moderator team asked for.
+        if (a.urgency !== b.urgency) return b.urgency - a.urgency;
+        return new Date(b.createdAt) - new Date(a.createdAt);
+      });
+    }
 
     // Project a shape that the admin UI already understands: same
     // `source` / `author` / `target` triple we use on the dashboard
@@ -1068,8 +1194,14 @@ router.get(
     const userIds = items
       .filter((item) => item.targetType === 'USER' && isValidObjectId(item.targetId))
       .map((item) => item.targetId);
+    const groupIds = items
+      .filter((item) => item.targetType === 'GROUP' && isValidObjectId(item.targetId))
+      .map((item) => item.targetId);
+    const messageIds = items
+      .filter((item) => item.targetType === 'MESSAGE' && isValidObjectId(item.targetId))
+      .map((item) => item.targetId);
 
-    const [posts, comments, users] = await Promise.all([
+    const [posts, comments, users, groups, messages] = await Promise.all([
       postIds.length
         ? Post.find({ _id: { $in: postIds } }).select(
             '_id content authorSnapshot status mediaUrls audience topics reactionCount commentCount createdAt',
@@ -1085,11 +1217,23 @@ router.get(
             '_id displayName username avatarUrl age role moderationStatus createdAt',
           )
         : [],
+      groupIds.length
+        ? Group.find({ _id: { $in: groupIds } }).select(
+            '_id name topic description memberCount status createdAt',
+          )
+        : [],
+      messageIds.length
+        ? Message.find({ _id: { $in: messageIds } })
+            .select('_id content senderId status createdAt')
+            .populate('senderId', 'displayName username avatarUrl')
+        : [],
     ]);
 
     const postById = new Map(posts.map((p) => [p._id.toString(), p]));
     const commentById = new Map(comments.map((c) => [c._id.toString(), c]));
     const userById = new Map(users.map((u) => [u._id.toString(), u]));
+    const groupById = new Map(groups.map((g) => [g._id.toString(), g]));
+    const messageById = new Map(messages.map((m) => [m._id.toString(), m]));
 
     const enriched = items.map((item) => {
       let target = null;
@@ -1107,6 +1251,7 @@ router.get(
           commentCount: post.commentCount,
           author: post.authorSnapshot?.displayName || post.authorSnapshot?.username || '',
           authorHandle: post.authorSnapshot?.username || '',
+          authorAvatarUrl: post.authorSnapshot?.avatarUrl || '',
           createdAt: post.createdAt,
         };
       } else if (item.targetType === 'COMMENT' && commentById.has(item.targetId)) {
@@ -1119,6 +1264,7 @@ router.get(
           status: comment.status,
           author: comment.authorSnapshot?.displayName || comment.authorSnapshot?.username || '',
           authorHandle: comment.authorSnapshot?.username || '',
+          authorAvatarUrl: comment.authorSnapshot?.avatarUrl || '',
           createdAt: comment.createdAt,
         };
       } else if (item.targetType === 'USER' && userById.has(item.targetId)) {
@@ -1133,6 +1279,37 @@ router.get(
           role: user.role,
           moderationStatus: user.moderationStatus,
           createdAt: user.createdAt,
+        };
+      } else if (item.targetType === 'GROUP' && groupById.has(item.targetId)) {
+        const group = groupById.get(item.targetId);
+        target = {
+          kind: 'GROUP',
+          id: group._id.toString(),
+          name: group.name,
+          topic: group.topic,
+          description: group.description || '',
+          memberCount: group.memberCount || 0,
+          status: group.status,
+          createdAt: group.createdAt,
+        };
+      } else if (item.targetType === 'MESSAGE' && messageById.has(item.targetId)) {
+        const message = messageById.get(item.targetId);
+        // Message sender is populated above as `{_id, displayName,
+        // username, avatarUrl}`. Guard against the case where populate
+        // returned null (sender account was deleted between report
+        // creation and now).
+        const sender = message.senderId && typeof message.senderId === 'object'
+          ? message.senderId
+          : null;
+        target = {
+          kind: 'MESSAGE',
+          id: message._id.toString(),
+          content: message.content,
+          status: message.status || 'PUBLISHED',
+          author: sender?.displayName || sender?.username || '',
+          authorHandle: sender?.username || '',
+          authorAvatarUrl: sender?.avatarUrl || '',
+          createdAt: message.createdAt,
         };
       } else if (item.targetId && item.targetId.startsWith('blocked-')) {
         const blocked = parseBlockedTarget(item.targetId);
@@ -1702,10 +1879,185 @@ router.patch(
 );
 
 router.get(
+  '/ai-stats',
+  asyncHandler(async (req, res) => {
+    const since24h = nowMinus(24 * 60 * 60 * 1000);
+    const since7d = nowMinus(7 * 24 * 60 * 60 * 1000);
+    const since30d = nowMinus(30 * 24 * 60 * 60 * 1000);
+
+    const [
+      // AI server health — real-time ping
+      healthResponse,
+      // Flagged content counts from the moderation pipeline
+      pendingFlags,
+      confirmedFlags24h,
+      dismissedFlags24h,
+      allFlags30d,
+      // Media moderation summary
+      blockedMedia30d,
+      reviewedMedia30d,
+      // Flagged content by source type (posts, comments, messages, media)
+      flagsBySource,
+      // Flagged content by provider (NSFWJS, CNN, keyword, user report)
+      flagsByProvider,
+      // Top unsafe labels
+      topLabels,
+      // Recent flagged content timeline (last 20)
+      recentFlags,
+    ] = await Promise.all([
+      // Ping AI server health endpoint
+      fetch(`${env.aiModerationUrl || 'http://127.0.0.1:8001'}/health`, {
+        signal: AbortSignal.timeout(5000),
+      })
+        .then((r) => r.json().catch(() => null))
+        .catch(() => null),
+      FlaggedContent.countDocuments({ status: 'PENDING' }),
+      FlaggedContent.countDocuments({ status: 'CONFIRMED', createdAt: { $gte: since24h } }),
+      FlaggedContent.countDocuments({ status: 'DISMISSED', createdAt: { $gte: since24h } }),
+      FlaggedContent.countDocuments({ createdAt: { $gte: since30d } }),
+      MediaAsset.countDocuments({ 'moderation.decision': 'BLOCKED', createdAt: { $gte: since30d } }),
+      MediaAsset.countDocuments({ 'moderation.decision': { $in: ['REVIEW', 'BLOCKED'] }, createdAt: { $gte: since30d } }),
+      // Group flags by source type
+      FlaggedContent.aggregate([
+        { $match: { createdAt: { $gte: since30d } } },
+        { $group: { _id: '$sourceType', count: { $sum: 1 } } },
+      ]),
+      // Group flags by who flagged them
+      FlaggedContent.aggregate([
+        { $match: { createdAt: { $gte: since30d } } },
+        { $group: { _id: '$flaggedBy', count: { $sum: 1 } } },
+      ]),
+      // Top flagged labels
+      FlaggedContent.aggregate([
+        { $match: { createdAt: { $gte: since30d }, categories: { $exists: true, $ne: [] } } },
+        { $unwind: '$categories' },
+        { $group: { _id: '$categories', count: { $sum: 1 }, avgScore: { $avg: '$score' } } },
+        { $sort: { count: -1 } },
+        { $limit: 10 },
+      ]),
+      // Recent flags timeline
+      FlaggedContent.find({ createdAt: { $gte: since7d } })
+        .sort({ createdAt: -1 })
+        .limit(20)
+        .lean(),
+    ]);
+
+    const flagsBySourceMap = Object.fromEntries(flagsBySource.map((s) => [s._id, s.count]));
+    const flagsByProviderMap = Object.fromEntries(flagsByProvider.map((p) => [p._id, p.count]));
+
+    const flags24hCount = await FlaggedContent.countDocuments({ createdAt: { $gte: since24h } });
+
+    return res.json({
+      server: {
+        status: healthResponse?.status === 'ok' ? 'online' : 'offline',
+        modelLoaded: healthResponse?.modelLoaded ?? false,
+        whisperLoaded: healthResponse?.whisperLoaded ?? false,
+        labels: healthResponse?.labels ?? [],
+        unsafeLabels: healthResponse?.unsafeLabels ?? [],
+        maxVideoFrames: healthResponse?.maxVideoFrames ?? 0,
+        modelPath: healthResponse?.modelPath ?? '',
+      },
+      summary: {
+        pendingFlags,
+        confirmed24h: confirmedFlags24h,
+        dismissed24h: dismissedFlags24h,
+        total30d: allFlags30d,
+        flagged24h: flags24hCount,
+        blockedMedia30d,
+        reviewedMedia30d,
+      },
+      bySource: flagsBySourceMap,
+      byProvider: flagsByProviderMap,
+      topLabels: topLabels.map((l) => ({
+        label: l._id,
+        count: l.count,
+        avgScore: Math.round(l.avgScore * 100) / 100,
+      })),
+      recentFlags: recentFlags.map((flag) => ({
+        id: flag._id.toString(),
+        sourceType: flag.sourceType,
+        sourceId: flag.sourceId,
+        flaggedBy: flag.flaggedBy,
+        categories: flag.categories,
+        score: flag.score,
+        decision: flag.details?.decision ?? 'UNKNOWN',
+        unsafeLabel: flag.details?.unsafeLabel ?? flag.details?.topLabel ?? '',
+        status: flag.status,
+        createdAt: flag.createdAt,
+      })),
+    });
+  }),
+);
+
+router.get(
   '/audit',
   asyncHandler(async (req, res) => {
-    const items = await AuditLog.find({}).sort({ createdAt: -1 }).limit(100);
-    return res.json({ items });
+    const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 20));
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const skip = (page - 1) * limit;
+
+    const [items, total] = await Promise.all([
+      AuditLog.find({}).sort({ createdAt: -1 }).skip(skip).limit(limit),
+      AuditLog.countDocuments({}),
+    ]);
+
+    // Collect unique user IDs from actors and target metadata
+    const userIds = new Set();
+    for (const item of items) {
+      if (item.actorId) userIds.add(item.actorId.toString());
+      if (item.targetType?.toUpperCase() === 'USER' && item.targetId) {
+        userIds.add(item.targetId.toString());
+      }
+      // Also look for user IDs inside metadata
+      const meta = item.metadata || {};
+      for (const val of Object.values(meta)) {
+        if (typeof val === 'string' && /^[a-f\d]{24}$/i.test(val)) {
+          userIds.add(val);
+        }
+      }
+    }
+
+    const users = userIds.size > 0
+      ? await User.find({ _id: { $in: [...userIds] } }).select('_id displayName username avatarUrl')
+      : [];
+    const userById = new Map(users.map((u) => [u._id.toString(), u]));
+
+    const enriched = items.map((item) => {
+      const actor = userById.get(item.actorId?.toString());
+      const targetIdStr = item.targetId?.toString() || '';
+      const isTargetUser = item.targetType?.toUpperCase() === 'USER';
+      const targetUser = isTargetUser ? userById.get(targetIdStr) : null;
+
+      const enrichedMeta = { ...(item.metadata || {}) };
+      if (targetUser && !enrichedMeta.targetDisplayName) {
+        enrichedMeta.targetDisplayName = targetUser.displayName || targetUser.username || targetIdStr;
+      }
+
+      return {
+        ...item.toObject(),
+        id: item._id.toString(),
+        actorId: item.actorId?.toString(),
+        actorUsername: actor
+          ? (actor.displayName || actor.username)
+          : (item.actorUsername || '—'),
+        targetId: targetIdStr,
+        _targetUser: targetUser
+          ? {
+              id: targetUser._id.toString(),
+              displayName: targetUser.displayName,
+              username: targetUser.username,
+            }
+          : null,
+        metadata: enrichedMeta,
+      };
+    });
+
+    return res.json({
+      items: enriched,
+      total,
+      page,
+      totalPages: Math.ceil(total / limit),
+    });
   }),
 );
 

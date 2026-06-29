@@ -26,9 +26,6 @@ dependencies:
   agora_rtc_engine: ^6.3.2
   permission_handler: ^11.3.1
 
-  # Google Login
-  google_sign_in: ^6.2.2
-
   # Voice Message
   record: ^6.1.1
   path_provider: ^2.1.5

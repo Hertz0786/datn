@@ -1,3 +1,5 @@
+const mongoose = require('mongoose');
+
 const Message = require('../models/Message');
 const User = require('../models/User');
 const { toPublicUser } = require('./public-user');
@@ -13,6 +15,7 @@ function serializeMessage(message) {
     senderId: message.senderId.toString(),
     content: message.content,
     mediaUrls: message.mediaUrls,
+    voiceUrl: message.voiceUrl || '',
     type: message.type || 'TEXT',
     postId: message.postId ? message.postId.toString() : null,
     status: message.status,
@@ -77,6 +80,42 @@ async function buildChatSummaries(chats, currentUserId) {
     lastMessagesMap.set(row._id.toString(), row.lastMessage);
   }
 
+  // Count unread messages per chat for `currentUserId`. A message is
+  // considered unread when:
+  //   * status === 'SENT',
+  //   * senderId !== currentUserId, and
+  //   * no `readBy` entry exists for currentUserId.
+  const unreadMap = new Map();
+  const currentObjectId = new mongoose.Types.ObjectId(currentUserId);
+  const unreadRaw = await Message.aggregate([
+    {
+      $match: {
+        chatId: { $in: chatIds },
+        status: 'SENT',
+        senderId: { $ne: currentObjectId },
+      },
+    },
+    {
+      $project: {
+        chatId: 1,
+        read: {
+          $anyElementTrue: {
+            $map: {
+              input: { $ifNull: ['$readBy', []] },
+              as: 'reader',
+              in: { $eq: ['$$reader.userId', currentObjectId] },
+            },
+          },
+        },
+      },
+    },
+    { $match: { read: false } },
+    { $group: { _id: '$chatId', count: { $sum: 1 } } },
+  ]);
+  for (const row of unreadRaw) {
+    unreadMap.set(row._id.toString(), row.count || 0);
+  }
+
   return chats.map((chat) => {
     const memberIdStrings = chat.memberIds.map((memberId) =>
       memberId.toString(),
@@ -107,6 +146,7 @@ async function buildChatSummaries(chats, currentUserId) {
           ? usersById.get(otherUserId) || null
           : null,
       lastMessage: serializeMessage(lastMessage),
+      unreadCount: unreadMap.get(chat._id.toString()) || 0,
       createdAt: chat.createdAt,
       updatedAt: chat.updatedAt,
     };

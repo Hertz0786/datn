@@ -27,6 +27,10 @@ class FeedPost {
     this.pendingMediaReview = false,
     this.mediaModerationScore = 0,
     this.mediaModerationLabel = '',
+    this.sharedFromPostId,
+    this.originalAuthorDisplayName,
+    this.originalAuthorUsername,
+    this.originalAuthorAvatarUrl,
   }) : _allowComments = allowComments,
        _allowReactions = allowReactions;
 
@@ -54,16 +58,20 @@ class FeedPost {
   final String? groupId;
   final DateTime? authorLastActiveAt;
 
-  // Moderation fields, populated by the backend when the post is
-  // either waiting for review or has been reviewed.
+  // Moderation fields
   final String status;
   final bool pendingMediaReview;
   final double mediaModerationScore;
   final String mediaModerationLabel;
 
+  // Shared post fields
+  final String? sharedFromPostId;
+  final String? originalAuthorDisplayName;
+  final String? originalAuthorUsername;
+  final String? originalAuthorAvatarUrl;
+
   /// True when the post is held back from the feed because an
-  /// attached image crossed the safe-publish threshold. The detail
-  /// screen uses this to show the "Đang chờ admin duyệt" banner.
+  /// attached image crossed the safe-publish threshold.
   bool get isPendingReview => status == 'HIDDEN' && pendingMediaReview;
 
   bool get isPublic => audience.toUpperCase() == 'PUBLIC';
@@ -101,6 +109,10 @@ class FeedPost {
     bool? pendingMediaReview,
     double? mediaModerationScore,
     String? mediaModerationLabel,
+    String? sharedFromPostId,
+    String? originalAuthorDisplayName,
+    String? originalAuthorUsername,
+    String? originalAuthorAvatarUrl,
   }) {
     return FeedPost(
       id: id ?? this.id,
@@ -129,6 +141,13 @@ class FeedPost {
       mediaModerationScore:
           mediaModerationScore ?? this.mediaModerationScore,
       mediaModerationLabel: mediaModerationLabel ?? this.mediaModerationLabel,
+      sharedFromPostId: sharedFromPostId ?? this.sharedFromPostId,
+      originalAuthorDisplayName:
+          originalAuthorDisplayName ?? this.originalAuthorDisplayName,
+      originalAuthorUsername:
+          originalAuthorUsername ?? this.originalAuthorUsername,
+      originalAuthorAvatarUrl:
+          originalAuthorAvatarUrl ?? this.originalAuthorAvatarUrl,
     );
   }
 
@@ -137,6 +156,8 @@ class FeedPost {
       json['authorSnapshot'],
     );
     final Map<String, dynamic> author = _readMap(json['author']);
+    final Map<String, dynamic> originalAuthorSnapshot =
+        _readMap(json['originalAuthorSnapshot']);
 
     final Map<String, int> reactions = <String, int>{};
     if (json['reactions'] is Map) {
@@ -207,6 +228,18 @@ class FeedPost {
       mediaModerationScore:
           (json['mediaModerationScore'] as num?)?.toDouble() ?? 0,
       mediaModerationLabel: (json['mediaModerationLabel'] ?? '').toString(),
+      sharedFromPostId: (json['sharedFromPostId'] as String?)?.isNotEmpty == true
+          ? json['sharedFromPostId'] as String
+          : null,
+      originalAuthorDisplayName: (originalAuthorSnapshot['displayName'] as String?)?.isNotEmpty == true
+          ? originalAuthorSnapshot['displayName'] as String
+          : null,
+      originalAuthorUsername: (originalAuthorSnapshot['username'] as String?)?.isNotEmpty == true
+          ? originalAuthorSnapshot['username'] as String
+          : null,
+      originalAuthorAvatarUrl: (originalAuthorSnapshot['avatarUrl'] as String?)?.isNotEmpty == true
+          ? originalAuthorSnapshot['avatarUrl'] as String
+          : null,
     );
   }
 }

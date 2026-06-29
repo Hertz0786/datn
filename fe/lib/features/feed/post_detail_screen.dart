@@ -13,6 +13,7 @@ import '../../core/services/realtime_service.dart';
 import '../../core/session/auth_session.dart';
 import '../../core/utils/date_time_formatter.dart';
 import '../../app/app_shell_navigator.dart';
+import '../../app/scaffold_with_bottom_nav.dart';
 import '../../shared/widgets/media_preview_grid.dart';
 import '../../shared/widgets/post_audience_badge.dart';
 import '../../shared/widgets/report_sheet.dart';
@@ -1436,13 +1437,15 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => FriendProfileScreen(
-          userId: authorId,
-          name: name.isEmpty ? 'Friend' : name,
-          age: 0,
-          favoriteTopic: 'Music',
-          avatarLabel: name.isEmpty ? '?' : name.substring(0, 1).toUpperCase(),
-          avatarUrl: post.authorAvatarUrl,
+        builder: (_) => PushedScreenShell(
+          child: FriendProfileScreen(
+            userId: authorId,
+            name: name.isEmpty ? 'Friend' : name,
+            age: 0,
+            favoriteTopic: 'Music',
+            avatarLabel: name.isEmpty ? '?' : name.substring(0, 1).toUpperCase(),
+            avatarUrl: post.authorAvatarUrl,
+          ),
         ),
       ),
     );
@@ -1459,13 +1462,15 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => FriendProfileScreen(
-          userId: authorId,
-          name: name.isEmpty ? 'Friend' : name,
-          age: 0,
-          favoriteTopic: 'Music',
-          avatarLabel: name.isEmpty ? '?' : name.substring(0, 1).toUpperCase(),
-          avatarUrl: comment.authorAvatarUrl,
+        builder: (_) => PushedScreenShell(
+          child: FriendProfileScreen(
+            userId: authorId,
+            name: name.isEmpty ? 'Friend' : name,
+            age: 0,
+            favoriteTopic: 'Music',
+            avatarLabel: name.isEmpty ? '?' : name.substring(0, 1).toUpperCase(),
+            avatarUrl: comment.authorAvatarUrl,
+          ),
         ),
       ),
     );
@@ -1478,15 +1483,17 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => FriendProfileScreen(
-          userId: user.id,
-          name: name.isEmpty ? 'Friend' : name,
-          age: user.age,
-          favoriteTopic: user.favoriteTopics.isEmpty
-              ? 'Music'
-              : user.favoriteTopics.first,
-          avatarLabel: user.initials,
-          avatarUrl: user.avatarUrl,
+        builder: (_) => PushedScreenShell(
+          child: FriendProfileScreen(
+            userId: user.id,
+            name: name.isEmpty ? 'Friend' : name,
+            age: user.age,
+            favoriteTopic: user.favoriteTopics.isEmpty
+                ? 'Music'
+                : user.favoriteTopics.first,
+            avatarLabel: user.initials,
+            avatarUrl: user.avatarUrl,
+          ),
         ),
       ),
     );

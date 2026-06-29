@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/models/friendship_status.dart';
+import '../../core/models/feed_post.dart';
 import '../../core/models/public_user.dart';
 import '../../core/models/user_badge.dart';
 import '../../core/network/api_exception.dart';
@@ -8,9 +9,15 @@ import '../../core/services/badges_api.dart';
 import '../../core/services/chats_api.dart';
 import '../../core/services/friends_api.dart';
 import '../../core/services/groups_api.dart';
+import '../../core/services/posts_api.dart';
 import '../../core/services/users_api.dart';
+import '../../core/session/auth_session.dart';
+import '../../app/app_shell_navigator.dart';
+import '../../app/scaffold_with_bottom_nav.dart';
 import '../../shared/widgets/user_avatar.dart';
 import '../chat/chat_detail_screen.dart';
+import '../feed/friend_bookmarks_screen.dart';
+import '../feed/friend_posts_screen.dart';
 import '../groups/user_groups_screen.dart';
 import '../profile/badge_gallery_screen.dart';
 import 'user_friends_screen.dart';
@@ -52,16 +59,45 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
   PublicUser? _profileUser;
   List<PublicUser> _mutualFriends = const <PublicUser>[];
 
+  bool _isLoadingPosts = false;
+  bool _hasPostsError = false;
+  bool _isLoadingBookmarks = false;
+  bool _hasBookmarksError = false;
+  List<FeedPost> _friendPosts = const <FeedPost>[];
+  List<FeedPost> _friendBookmarks = const <FeedPost>[];
+
   String get _targetUserId => widget.userId?.trim() ?? '';
   bool get _hasRealUser => _targetUserId.isNotEmpty;
 
   @override
   void initState() {
     super.initState();
+    // If the caller navigated here with the current user's id (a post
+    // author or commenter who is actually me), the friend-screen layout
+    // is wrong: it has no friendship controls and hides my own actions.
+    // Pop back to the root (AppShell) and switch to the Profile tab so
+    // the taskbar stays visible. A single `pop()` is not enough when
+    // the caller is several pushes deep (e.g. notification → post
+    // detail → friend profile), so we walk all the way back to the
+    // first route before switching tabs.
+    final String myId = (AuthSession.instance.user?['id'] ?? '').toString();
+    if (_targetUserId.isNotEmpty && myId.isNotEmpty && _targetUserId == myId) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        final NavigatorState navigator = Navigator.of(context);
+        navigator.popUntil((route) => route.isFirst);
+        AppShellNavigator.instance.switchToProfile();
+      });
+      return;
+    }
     _loadProfileUser();
     _loadFriendshipStatus();
     _loadProfileStats();
     _loadMutualFriends();
+    _loadFriendPosts();
+    _loadFriendBookmarks();
   }
 
   String get _displayName {
@@ -179,6 +215,74 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
     } finally {
       if (mounted && showLoading) {
         setState(() => _isLoadingMutualFriends = false);
+      }
+    }
+  }
+
+  Future<void> _loadFriendPosts() async {
+    if (!_hasRealUser) {
+      return;
+    }
+
+    setState(() {
+      _isLoadingPosts = true;
+      _hasPostsError = false;
+    });
+
+    try {
+      final FeedPage page = await PostsApi.instance.userPosts(_targetUserId, limit: 3);
+      if (!mounted) return;
+      setState(() => _friendPosts = page.items);
+    } on ApiException catch (error) {
+      // 401/403 means the visitor is not allowed to see this user's
+      // posts (or isn't authenticated). Treat it as "nothing to show"
+      // instead of an error — the profile may still be reachable for
+      // public information.
+      if (!mounted) return;
+      if (error.statusCode == 401 || error.statusCode == 403) {
+        setState(() => _friendPosts = const <FeedPost>[]);
+      } else {
+        setState(() => _hasPostsError = true);
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _hasPostsError = true);
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingPosts = false);
+      }
+    }
+  }
+
+  Future<void> _loadFriendBookmarks() async {
+    if (!_hasRealUser) {
+      return;
+    }
+
+    setState(() {
+      _isLoadingBookmarks = true;
+      _hasBookmarksError = false;
+    });
+
+    try {
+      final FeedPage page = await PostsApi.instance.userBookmarks(_targetUserId, limit: 6);
+      if (!mounted) return;
+      setState(() => _friendBookmarks = page.items);
+    } on ApiException catch (error) {
+      // Bookmarks are private — 401/403 just means "no bookmarks to
+      // show" for this viewer. Surface as empty, not as an error.
+      if (!mounted) return;
+      if (error.statusCode == 401 || error.statusCode == 403) {
+        setState(() => _friendBookmarks = const <FeedPost>[]);
+      } else {
+        setState(() => _hasBookmarksError = true);
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _hasBookmarksError = true);
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingBookmarks = false);
       }
     }
   }
@@ -511,15 +615,17 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => FriendProfileScreen(
-          userId: user.id,
-          name: user.displayName,
-          age: user.age,
-          favoriteTopic: user.favoriteTopics.isEmpty
-              ? 'Music'
-              : user.favoriteTopics.first,
-          avatarLabel: user.initials,
-          avatarUrl: user.avatarUrl,
+        builder: (_) => PushedScreenShell(
+          child: FriendProfileScreen(
+            userId: user.id,
+            name: user.displayName,
+            age: user.age,
+            favoriteTopic: user.favoriteTopics.isEmpty
+                ? 'Music'
+                : user.favoriteTopics.first,
+            avatarLabel: user.initials,
+            avatarUrl: user.avatarUrl,
+          ),
         ),
       ),
     );
@@ -611,6 +717,53 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
             ),
           ),
       ],
+    );
+  }
+
+  Widget _buildFriendPostsSection() {
+    return _FriendPostSection(
+      posts: _friendPosts,
+      isLoading: _isLoadingPosts,
+      hasError: _hasPostsError,
+      displayName: _displayName,
+      onTap: _friendPosts.isNotEmpty ? _openAllFriendPosts : () {},
+    );
+  }
+
+  Widget _buildFriendBookmarksSection() {
+    if (_friendBookmarks.isEmpty && !_isLoadingBookmarks && !_hasBookmarksError) {
+      return const SizedBox.shrink();
+    }
+    return _FriendBookmarksSection(
+      bookmarks: _friendBookmarks,
+      isLoading: _isLoadingBookmarks,
+      hasError: _hasBookmarksError,
+      displayName: _displayName,
+      onTap: _friendBookmarks.isNotEmpty ? _openAllFriendBookmarks : () {},
+    );
+  }
+
+  void _openAllFriendPosts() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => FriendPostsScreen(
+          userId: _targetUserId,
+          displayName: _displayName,
+        ),
+      ),
+    );
+  }
+
+  void _openAllFriendBookmarks() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => FriendBookmarksScreen(
+          userId: _targetUserId,
+          displayName: _displayName,
+        ),
+      ),
     );
   }
 
@@ -787,34 +940,9 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
           const SizedBox(height: 16),
           _buildMutualFriendsSection(),
           const SizedBox(height: 16),
-          const Text(
-            'Recent activities',
-            style: TextStyle(
-              fontWeight: FontWeight.w800,
-              color: Color(0xFF1A3D7C),
-            ),
-          ),
-          const SizedBox(height: 10),
-          ...const [
-            _ActivityTile(
-              icon: Icons.palette_rounded,
-              color: Color(0xFFFFC5E6),
-              title: 'Shared a new drawing challenge',
-              time: '2h ago',
-            ),
-            _ActivityTile(
-              icon: Icons.groups_rounded,
-              color: Color(0xFF9BE7FF),
-              title: 'Joined Tiny Rocket Lab group',
-              time: 'Yesterday',
-            ),
-            _ActivityTile(
-              icon: Icons.emoji_events_rounded,
-              color: Color(0xFFFFE59E),
-              title: 'Won a "Kind Helper" badge',
-              time: '2d ago',
-            ),
-          ],
+          _buildFriendPostsSection(),
+          const SizedBox(height: 16),
+          _buildFriendBookmarksSection(),
         ],
       ),
     );
@@ -880,51 +1008,305 @@ class _StatCard extends StatelessWidget {
   }
 }
 
-class _ActivityTile extends StatelessWidget {
-  const _ActivityTile({
-    required this.icon,
-    required this.color,
-    required this.title,
-    required this.time,
+class _FriendPostSection extends StatelessWidget {
+  const _FriendPostSection({
+    required this.posts,
+    required this.isLoading,
+    required this.hasError,
+    required this.displayName,
+    required this.onTap,
   });
 
-  final IconData icon;
-  final Color color;
-  final String title;
-  final String time;
+  final List<FeedPost> posts;
+  final bool isLoading;
+  final bool hasError;
+  final String displayName;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(9),
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-            child: Icon(icon, color: const Color(0xFF1A3D7C)),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(fontWeight: FontWeight.w700),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                '$displayName\'s posts',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF1A3D7C),
                 ),
-                const SizedBox(height: 3),
-                Text(time, style: const TextStyle(color: Color(0xFF7A8BBF))),
-              ],
+              ),
             ),
+            if (posts.isNotEmpty)
+              TextButton(
+                onPressed: onTap,
+                child: const Text('See all'),
+              ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        if (isLoading)
+          const SizedBox(
+            height: 80,
+            child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+          )
+        else if (hasError)
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFF0F8),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Text(
+              'Could not load posts.',
+              style: TextStyle(color: Color(0xFFA01843)),
+            ),
+          )
+        else if (posts.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Text(
+              'No posts yet.',
+              style: TextStyle(color: Color(0xFF5A74A6)),
+            ),
+          )
+        else
+          Column(
+            children: posts.take(3).map((post) {
+              final String preview = post.content.length > 100
+                  ? '${post.content.substring(0, 100)}...'
+                  : post.content;
+              return Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: InkWell(
+                  onTap: onTap,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              preview.isEmpty ? '(post)' : preview,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(height: 1.3),
+                            ),
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                if (post.mediaUrls.isNotEmpty) ...[
+                                  const Icon(Icons.image_outlined,
+                                      size: 13, color: Color(0xFF7A8BBF)),
+                                  const SizedBox(width: 2),
+                                  Text(
+                                    '${post.mediaUrls.length}',
+                                    style: const TextStyle(
+                                        fontSize: 12,
+                                        color: Color(0xFF7A8BBF)),
+                                  ),
+                                  const SizedBox(width: 8),
+                                ],
+                                const Icon(Icons.favorite_rounded,
+                                    size: 13, color: Color(0xFFFF5A9E)),
+                                const SizedBox(width: 2),
+                                Text(
+                                  '${post.reactionCount}',
+                                  style: const TextStyle(
+                                      fontSize: 12,
+                                      color: Color(0xFF7A8BBF)),
+                                ),
+                                const SizedBox(width: 8),
+                                const Icon(Icons.comment_outlined,
+                                    size: 13, color: Color(0xFF7A8BBF)),
+                                const SizedBox(width: 2),
+                                Text(
+                                  '${post.commentCount}',
+                                  style: const TextStyle(
+                                      fontSize: 12,
+                                      color: Color(0xFF7A8BBF)),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (post.mediaUrls.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 8),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: Image.network(
+                              post.mediaUrls.first,
+                              width: 56,
+                              height: 56,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, _, _) =>
+                                  const SizedBox(width: 56, height: 56),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              );
+            }).toList(),
           ),
-        ],
-      ),
+      ],
     );
   }
 }
+
+class _FriendBookmarksSection extends StatelessWidget {
+  const _FriendBookmarksSection({
+    required this.bookmarks,
+    required this.isLoading,
+    required this.hasError,
+    required this.displayName,
+    required this.onTap,
+  });
+
+  final List<FeedPost> bookmarks;
+  final bool isLoading;
+  final bool hasError;
+  final String displayName;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                '$displayName\'s bookmarks',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF1A3D7C),
+                ),
+              ),
+            ),
+            if (bookmarks.isNotEmpty)
+              TextButton(
+                onPressed: onTap,
+                child: const Text('See all'),
+              ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        if (isLoading)
+          const SizedBox(
+            height: 80,
+            child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+          )
+        else if (hasError)
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFF0F8),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Text(
+              'Could not load bookmarks.',
+              style: TextStyle(color: Color(0xFFA01843)),
+            ),
+          )
+        else if (bookmarks.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Text(
+              'No bookmarks yet.',
+              style: TextStyle(color: Color(0xFF5A74A6)),
+            ),
+          )
+        else
+          SizedBox(
+            height: 100,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: bookmarks.take(6).length,
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
+              itemBuilder: (context, index) {
+                final post = bookmarks[index];
+                return InkWell(
+                  onTap: onTap,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    width: 140,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          post.authorDisplayName.isNotEmpty
+                              ? '@${post.authorDisplayName}'
+                              : '@${post.authorUsername}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF1A3D7C),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Expanded(
+                          child: Text(
+                            post.content.isEmpty
+                                ? '(post)'
+                                : post.content,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Color(0xFF5A74A6),
+                            ),
+                          ),
+                        ),
+                        Row(
+                          children: [
+                            const Icon(Icons.bookmark,
+                                size: 12, color: Color(0xFFFF5A9E)),
+                            const SizedBox(width: 2),
+                            Text(
+                              '${post.reactionCount}',
+                              style: const TextStyle(
+                                  fontSize: 11, color: Color(0xFF7A8BBF)),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+      ],
+    );
+  }
+}
+

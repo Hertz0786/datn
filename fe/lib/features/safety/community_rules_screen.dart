@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../../core/models/community_rule.dart';
 import '../../core/services/safety_api.dart';
-import 'report_violation_screen.dart';
 
 class CommunityRulesScreen extends StatefulWidget {
   const CommunityRulesScreen({super.key});
@@ -128,99 +127,6 @@ class _CommunityRulesScreenState extends State<CommunityRulesScreen> {
                 ),
               ),
             const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.05),
-                    blurRadius: 12,
-                    offset: const Offset(0, 6),
-                  ),
-                ],
-              ),
-              child: const Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'What happens after a report?',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w800,
-                      color: Color(0xFF1A3D7C),
-                    ),
-                  ),
-                  SizedBox(height: 8),
-                  _StepText(
-                    index: 1,
-                    text: 'Safety team checks the report quickly.',
-                  ),
-                  _StepText(
-                    index: 2,
-                    text: 'Content can be hidden while reviewing.',
-                  ),
-                  _StepText(
-                    index: 3,
-                    text: 'Serious cases can lead to account limits.',
-                  ),
-                  _StepText(
-                    index: 4,
-                    text: 'You get a notification about the result.',
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: const Row(
-                children: [
-                  Icon(
-                    Icons.tips_and_updates_rounded,
-                    color: Color(0xFF33B8FF),
-                  ),
-                  SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'If something feels unsafe, trust your feeling and report it.',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF1A3D7C),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton.icon(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const ReportViolationScreen(),
-                  ),
-                );
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF33B8FF),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-              ),
-              icon: const Icon(Icons.report_gmailerrorred_rounded),
-              label: const Text(
-                'Report a Violation',
-                style: TextStyle(fontWeight: FontWeight.w700),
-              ),
-            ),
           ],
         ),
       ),
@@ -311,33 +217,6 @@ class _RuleTile extends StatelessWidget {
               ],
             ),
           ),
-        ],
-      ),
-    );
-  }
-}
-
-class _StepText extends StatelessWidget {
-  const _StepText({required this.index, required this.text});
-
-  final int index;
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '$index. ',
-            style: const TextStyle(
-              fontWeight: FontWeight.w800,
-              color: Color(0xFF33B8FF),
-            ),
-          ),
-          Expanded(child: Text(text)),
         ],
       ),
     );

@@ -10,7 +10,7 @@ const asyncHandler = require('../utils/async-handler');
 const { requireAuth } = require('../middlewares/auth');
 const { isValidObjectId } = require('../middlewares/object-id');
 const { attachMediaToSource, detachMediaFromSource } = require('../services/media-attachment');
-const { assertMediaAllowed } = require('../services/ai-media-moderation');
+const { assertMediaAllowed, transcribeMedia } = require('../services/ai-media-moderation');
 const { destroyMediaAsset, uploadBuffer } = require('../services/media-storage');
 const env = require('../config/env');
 const FlaggedContent = require('../models/FlaggedContent');
@@ -185,9 +185,67 @@ router.post(
     const sourceId = await validateSource(req, sourceType, req.body.sourceId);
     const isAudio = /^audio\//.test(req.file.mimetype) ||
       /\.(m4a|mp3|aac|opus|ogg|wav|flac)$/i.test(req.file.originalname);
-    const moderation = isAudio
-      ? { decision: 'SKIPPED', skippedReason: 'Audio files are not moderated.' }
-      : await assertMediaAllowed(req.file);
+    const isVideo = /^video\//.test(req.file.mimetype) ||
+      /\.(mp4|mov|webm|mkv|avi)$/i.test(req.file.originalname);
+
+    let moderation;
+    let transcriptionResult = null;
+
+    if (isAudio) {
+      moderation = { decision: 'SKIPPED', skippedReason: 'Audio files are not moderated.' };
+    } else if (isVideo) {
+      // Run frame analysis and speech transcription concurrently
+      const [frameResult, transcription] = await Promise.allSettled([
+        assertMediaAllowed(req.file),
+        transcribeMedia(req.file),
+      ]);
+
+      const frameMod = frameResult.status === 'fulfilled' ? frameResult.value : {
+        decision: 'ERROR',
+        unsafeScore: 0,
+        unsafeLabel: '',
+        details: { error: frameResult.reason?.message || 'Frame analysis failed.' },
+      };
+
+      if (transcription.status === 'fulfilled') {
+        transcriptionResult = transcription.value;
+      }
+
+      // Merge: use the worst decision across frame + speech checks
+      const sttDecision = transcriptionResult?.moderation?.decision || 'APPROVED';
+      const sttScore = Number(transcriptionResult?.moderation?.unsafeScore || 0);
+      const frameScore = Number(frameMod.unsafeScore || 0);
+      const maxScore = Math.max(frameScore, sttScore);
+
+      let mergedDecision = 'APPROVED';
+      if (frameMod.decision === 'BLOCKED' || sttDecision === 'BLOCKED') {
+        mergedDecision = 'BLOCKED';
+      } else if (frameMod.decision === 'REVIEW' || sttDecision === 'REVIEW') {
+        mergedDecision = 'REVIEW';
+      }
+
+      moderation = {
+        decision: mergedDecision,
+        framesModeration: {
+          decision: frameMod.decision,
+          unsafeLabel: frameMod.unsafeLabel,
+          unsafeScore: frameScore,
+          topLabel: frameMod.topLabel,
+          framesChecked: frameMod.framesChecked,
+        },
+        speechModeration: {
+          decision: sttDecision,
+          unsafeScore: sttScore,
+          flaggedKeywords: transcriptionResult?.moderation?.flaggedKeywords || [],
+          transcribedText: transcriptionResult?.text || '',
+          language: transcriptionResult?.language || 'vi',
+        },
+        unsafeScore: maxScore,
+        unsafeLabel: frameScore >= sttScore ? frameMod.unsafeLabel : (transcriptionResult?.moderation?.flaggedKeywords?.[0] || ''),
+      };
+    } else {
+      moderation = await assertMediaAllowed(req.file);
+    }
     const uploaded = await uploadBuffer(req.file, {
       sourceType,
       ownerId: req.user.id,
@@ -231,6 +289,8 @@ router.post(
           unsafeLabel: moderation.unsafeLabel,
           unsafeScore: moderation.unsafeScore,
           thresholds: moderation.details?.thresholds || {},
+          framesModeration: moderation.framesModeration || null,
+          speechModeration: moderation.speechModeration || null,
         },
         status: 'PENDING',
       });
@@ -245,6 +305,8 @@ router.post(
         unsafeLabel: moderation.unsafeLabel,
         unsafeScore: moderation.unsafeScore,
         ownerId: req.user.id,
+        speechModeration: moderation.speechModeration || null,
+        isSpeechFlagged: moderation.speechModeration?.decision !== 'APPROVED',
       });
     }
 
@@ -280,6 +342,13 @@ router.post(
         topScore: Number(moderation.topScore || 0),
         threshold,
         thresholdExceeded,
+        transcription: transcriptionResult ? {
+          text: transcriptionResult.text,
+          language: transcriptionResult.language,
+          flaggedKeywords: transcriptionResult.moderation?.flaggedKeywords || [],
+          speechUnsafeScore: Number(transcriptionResult.moderation?.unsafeScore || 0),
+          speechDecision: transcriptionResult.moderation?.decision || 'APPROVED',
+        } : null,
       },
     });
   }),

@@ -112,7 +112,10 @@ class _MyPostsScreenState extends State<MyPostsScreen> {
                 separatorBuilder: (_, _) => const SizedBox(height: 12),
                 itemBuilder: (context, index) {
                   final FeedPost post = _posts[index];
-                  return _MyPostTile(post: post, onTap: () => _openPost(post));
+                  return _MyPostTile(
+                    post: post,
+                    onTap: () => _openPost(post),
+                  );
                 },
               ),
       ),
@@ -121,7 +124,10 @@ class _MyPostsScreenState extends State<MyPostsScreen> {
 }
 
 class _MyPostTile extends StatelessWidget {
-  const _MyPostTile({required this.post, required this.onTap});
+  const _MyPostTile({
+    required this.post,
+    required this.onTap,
+  });
 
   final FeedPost post;
   final VoidCallback onTap;

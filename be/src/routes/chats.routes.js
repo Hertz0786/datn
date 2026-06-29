@@ -1,9 +1,11 @@
 const express = require('express');
+const mongoose = require('mongoose');
 
 const Chat = require('../models/Chat');
 const Friendship = require('../models/Friendship');
 const GroupMember = require('../models/GroupMember');
 const Message = require('../models/Message');
+const Post = require('../models/Post');
 const User = require('../models/User');
 const asyncHandler = require('../utils/async-handler');
 const { requireAuth } = require('../middlewares/auth');
@@ -449,12 +451,13 @@ router.post(
     const { content = '', postId = null } = req.body;
     const mediaUrls = readMediaUrls(req.body.mediaUrls);
     const cleanContent = String(content).trim();
+    const voiceUrl = String(req.body.voiceUrl || '').trim();
 
     if (!isValidObjectId(chatId)) {
       return res.status(400).json({ message: 'Invalid chatId.' });
     }
-    if (!cleanContent && mediaUrls.length === 0 && !postId) {
-      return res.status(400).json({ message: 'content, mediaUrls, or postId is required.' });
+    if (!cleanContent && mediaUrls.length === 0 && !postId && !voiceUrl) {
+      return res.status(400).json({ message: 'content, mediaUrls, voiceUrl, or postId is required.' });
     }
 
     const chat = await Chat.findOne({ _id: chatId, memberIds: req.user.id });
@@ -481,11 +484,18 @@ router.post(
 
     const messageType = postId ? 'POST_SHARE' : 'TEXT';
 
+    // Look up the shared post to notify its author.
+    let sharedPost = null;
+    if (postId) {
+      sharedPost = await Post.findById(postId).select('authorId content');
+    }
+
     const message = await Message.create({
       chatId,
       senderId: req.user.id,
       content: cleanContent,
       mediaUrls,
+      voiceUrl,
       type: messageType,
       postId: postId || undefined,
       status: 'SENT',
@@ -503,6 +513,30 @@ router.post(
         message: data,
       },
     );
+
+    // When sharing a post, also notify the post's author so they know
+    // their content was forwarded to a conversation.
+    if (sharedPost && sharedPost.authorId.toString() !== req.user.id) {
+      const sharer = await User.findById(req.user.id).select(
+        'displayName username avatarUrl',
+      );
+      await sendNotification({
+        userId: sharedPost.authorId,
+        actorId: req.user.id,
+        type: NOTIFICATION_TYPES.POST_SHARED,
+        payload: {
+          postId: postId.toString(),
+          contentSnippet: String(sharedPost.content || '').slice(0, 120),
+          chatId,
+          chatName: chatTitle(chat),
+          ...(sharer ? actorSnapshot(sharer) : {}),
+          navigationTarget: {
+            route: 'POST_DETAIL',
+            postId: postId.toString(),
+          },
+        },
+      });
+    }
 
     // Persist a notification row for every recipient so they see
     // the new message in their inbox even if they were offline when
@@ -592,6 +626,52 @@ router.post(
     }
 
     return res.json({ message: 'Marked as read.', readBy: message.readBy });
+  }),
+);
+
+// Mark every currently-unread message in a chat as read for the requesting
+// user. Idempotent: re-running it after all messages are already marked is a
+// no-op. Used by the inbox when a user opens a conversation so the unread
+// badge clears in one round-trip instead of one request per message.
+router.post(
+  '/:chatId/read',
+  asyncHandler(async (req, res) => {
+    const { chatId } = req.params;
+    if (!isValidObjectId(chatId)) {
+      return res.status(400).json({ message: 'Invalid chatId.' });
+    }
+
+    const chat = await Chat.findOne({ _id: chatId, memberIds: req.user.id });
+    if (!chat) {
+      return res.status(404).json({ message: 'Chat not found.' });
+    }
+
+    const currentObjectId = new mongoose.Types.ObjectId(req.user.id);
+    const now = new Date();
+    const result = await Message.updateMany(
+      {
+        chatId,
+        status: 'SENT',
+        senderId: { $ne: currentObjectId },
+        'readBy.userId': { $ne: currentObjectId },
+      },
+      {
+        $push: { readBy: { userId: currentObjectId, readAt: now } },
+      },
+    );
+
+    // Let the inbox subscribers know the unread counter has dropped.
+    emitToUser(req.user.id, 'chat:read', {
+      chatId,
+      markedCount: result.modifiedCount || 0,
+      markedAt: now.toISOString(),
+    });
+
+    return res.json({
+      chatId,
+      markedCount: result.modifiedCount || 0,
+      markedAt: now,
+    });
   }),
 );
 

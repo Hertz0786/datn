@@ -9,6 +9,11 @@ function createHttpError(statusCode, message, payload) {
   return error;
 }
 
+function parsePositiveInt(val, fallback) {
+  const n = Number(val);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 function normalizeBaseUrl(value) {
   return String(value || '').trim().replace(/\/+$/, '');
 }
@@ -81,10 +86,13 @@ async function transcribeMedia(file) {
     throw createHttpError(503, 'AI_MODERATION_URL is not configured.');
   }
 
+  // Transcription of video can take significantly longer than frame analysis.
+  // Use a separate, longer timeout for transcriptions (2 minutes for videos up to 2 min).
+  const transcribeTimeoutMs = parsePositiveInt(process.env.AI_TRANSCRIBE_TIMEOUT_MS, 120000);
   const controller = new AbortController();
   const timeout = setTimeout(
     () => controller.abort(),
-    env.aiModerationTimeoutMs,
+    transcribeTimeoutMs,
   );
   timeout.unref?.();
 

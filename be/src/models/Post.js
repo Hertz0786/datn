@@ -122,15 +122,31 @@ const postSchema = new mongoose.Schema(
       default: '',
       maxlength: 240,
     },
+    // When a user reshares another user's post to their own profile,
+    // this stores the original post's ID so we can render "shared from X"
+    // and optionally link back.
+    sharedFromPostId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Post',
+      default: null,
+      index: true,
+    },
+    // Snapshot of the *original* post's author, preserved at share time
+    // so we can always display the correct original author even if
+    // they change their display name / avatar later.
+    originalAuthorSnapshot: {
+      displayName: { type: String, default: '' },
+      username: { type: String, default: '' },
+      avatarUrl: { type: String, default: '' },
+    },
   },
   { timestamps: true },
 );
 
-postSchema.pre('validate', function (next) {
+postSchema.pre('validate', function () {
   if (this.ageMin > this.ageMax) {
     this.invalidate('ageMin', 'ageMin cannot be greater than ageMax.');
   }
-  next();
 });
 
 postSchema.index({ topics: 1, ageMin: 1, ageMax: 1, status: 1 });

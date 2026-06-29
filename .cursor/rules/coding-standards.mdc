@@ -1,0 +1,38 @@
+---
+description: Safety, security, and architecture standards for this project
+alwaysApply: true
+---
+
+# Coding Standards
+
+## Safety & Privacy (COPPA / GDPR-K)
+
+- **Child privacy is paramount.** Never collect, store, or transmit unencrypted Personally Identifiable Information (PII) of minors.
+- Strictly adhere to **COPPA** and **GDPR-K** regulations at all times.
+- All API endpoints **must** be secured with **JWT authentication**. No exceptions.
+- Never expose user data in logs, error messages, or client-side responses.
+
+## Fail-Safe Defaults
+
+- If the AI moderation server is unavailable or slow to respond, the Express backend **must block or hide uploaded content** rather than expose it.
+- Default behavior is **deny-on-failure**, not expose-on-failure. Assume content is unsafe until proven otherwise.
+- Implement circuit breakers and timeouts (e.g., 5s max) when calling external AI services. On timeout, reject the content.
+
+## Code Quality
+
+- Write **production-ready, fully typed** code. No placeholders, no TODOs left in logic.
+- Every async operation **must** be wrapped in `try-catch` with proper error handling.
+- Never use `any` types without explicit justification. Prefer `unknown` for external data.
+- Include meaningful error messages and logging at every boundary (API, DB, external services).
+
+## Architecture
+
+- Follow **Clean Architecture**: separate concerns clearly across **UI**, **Business Logic**, and **Data Access** layers.
+- Apply **SOLID** principles — especially Single Responsibility and Dependency Inversion.
+- Follow **DRY**: extract shared logic into services, utilities, or middleware rather than duplicating code.
+- Backend services (Express/Node.js) handle auth, data access, and external integrations. Frontend (Flutter/Dart) handles presentation and state management only.
+
+## Thinking Process
+
+- Before writing any code block, briefly explain the logic and workflow in natural language.
+- Use chain-of-thought reasoning to ensure the implementation covers error paths, security, and edge cases — not just the happy path.

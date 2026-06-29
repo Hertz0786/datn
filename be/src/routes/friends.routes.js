@@ -606,34 +606,9 @@ router.delete(
       ],
     });
 
-    // Optional: Notify the other user
-    const otherUserId = req.user.id === pair.userAId.toString() ? pair.userBId.toString() : pair.userAId.toString();
-    const removerInfo = await User.findById(req.user.id).select(
-      'displayName username avatarUrl',
-    );
-    const removerSnapshot = removerInfo
-      ? actorSnapshot(removerInfo)
-      : {
-          actorId: req.user.id,
-          actorName: 'Ai đó',
-          actorUsername: '',
-          actorAvatarUrl: '',
-        };
-
-    await sendNotification({
-      userId: otherUserId,
-      actorId: req.user.id,
-      type: NOTIFICATION_TYPES.FRIEND_REMOVED,
-      payload: {
-        byUserId: req.user.id,
-        ...removerSnapshot,
-        navigationTarget: {
-          route: 'PROFILE',
-          userId: req.user.id,
-        },
-      },
-    });
-
+    // We intentionally do NOT send a FRIEND_REMOVED notification:
+    // removing a friend should be silent from the recipient's
+    // perspective to avoid awkward / confrontational UX.
 
     return res.json({ message: 'Friend removed successfully.' });
   }),

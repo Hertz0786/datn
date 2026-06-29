@@ -1,0 +1,439 @@
+================================================================================
+                    KIDDO ADMIN PANEL — TAI LIEU HE THONG
+================================================================================
+Tong quan: Admin panel la React SPA nam trong thu muc `fe admin/src/`, rieng biet
+voi ung dung Flutter. Ho tro quy trinh kiem duyet noi dung, quan ly nguoi dung,
+theo doi hoat dong va dam bao an toan tre em (COPPA/GDPR-K).
+
+URL mac dinh: http://localhost:5173 (Vite dev server)
+Backend API: http://localhost:5000/api/admin
+
+================================================================================
+PHAN 1 — DANG NHAP (LOGIN)
+================================================================================
+Trang: LoginPage.jsx
+Duong dan: Hien thi khi chua co token trong localStorage (admin_token)
+API: POST /api/auth/login
+  - Body: { username, password }
+  - Tra ve: { token, user }
+  - Luu: token vao localStorage['admin_token'], user vao localStorage['admin_user']
+Loi: Hien thi thong bao loi dang nhap
+
+================================================================================
+PHAN 2 — TRANG CHU (DASHBOARD)
+================================================================================
+Trang: DashboardPage.jsx
+API: GET /api/admin/dashboard
+  - Tra ve:
+    * stats[]: 6 KPI cards (xem ben duoi)
+    * topReports[]: Top 5 bao cao uu tien nhat (chua giai quyet, sap xep theo urgency)
+    * flaggedPosts[]: Top 5 noi dung bi flag (diem cao nhat, tu AI pipeline)
+    * watchedUsers[]: 5 nguoi dung moi nhat trong watchlist
+    * auditEvents[]: 10 su kien kiem toan gan nhat
+
+Stats cards (6 KPI tren dashboard):
+  1. Active children      - So tre dang hoat dong (role=CHILD, isActive=true)
+  2. Posts today         - So bai dang trong 24h
+  3. Open reports        - So bao cao chua xu ly (PENDING/REVIEWING)
+  4. Flagged messages    - Tin nhan bi flag trong 24h (tu AI pipeline)
+  5. AI flags pending    - Tong so flag dang cho xu ly (tu AI moderation)
+  6. AI flags 7d        - Tong flag trong 7 ngay
+
+Panels hien thi tren dashboard:
+  - Highest priority reports: Card bao cao (hien nguoi bao cao, noi dung, so lan trung,
+    muc do uu tien 1-5, nguon: USER hoac AUTO_MODERATION)
+  - Flagged content: Noi dung bi AI flag (diem an toan, label, trang thai)
+  - Watched accounts: Nguoi dung trong watchlist (ten, risk level)
+  - Audit trail: Lich su hanh dong gan nhat
+
+================================================================================
+PHAN 3 — BAO CAO AN TOAN (REPORTS)
+================================================================================
+Trang: ReportsPage.jsx
+API:
+  - GET /api/admin/reports?status=     (listReports)
+      ?status= PENDING | REVIEWING | RESOLVED | DISMISSED | ALL (mac dinh=PENDING)
+      Tra ve: items[] voi moi item co:
+        id, source (USER|AUTO_MODERATION), category, urgency(1-5),
+        status, details, targetType, targetId, targetContent,
+        createdAt, updatedAt, reporter{}, author{}, target{}
+      Target{} bao gom:
+        - POST: id, content, mediaUrls[], status, author, reactions, commentCount...
+        - COMMENT: id, content, postId, author
+        - USER: id, displayName, username, avatarUrl, age, role
+        - BLOCKED_*: content snippet, blocked:true (noi dung bi chan truoc khi luu)
+  - PATCH /api/admin/reports/:id      (updateReport)
+      Body: { status: "REVIEWING" | "RESOLVED" | "DISMISSED" }
+      Chi danh cho REPORT (khong phai FLAG)
+
+Nut hanh dong tren bao cao:
+  - Reviewing: Danh dau dang xem xet
+  - Resolved: Da xu ly (da hanh dong doi voi nguoi dung/noi dung)
+  - Dismissed: Loai bo (bao cao vo nghia)
+
+Luu y: Co 2 loai bao cao khac nhau:
+  - USER REPORT: Nguoi dung bao cao nguoi dung/khac
+  - AUTO_MODERATION: He thong tu dong flag (AI, keyword filter)
+
+================================================================================
+PHAN 4 — POSTS & COMMENTS (NOI DUNG)
+================================================================================
+Trang: ContentPage.jsx
+API:
+  - GET /api/admin/posts?status=&pending=  (listPosts)
+      ?status= PUBLISHED | HIDDEN | DELETED | PENDING_REVIEW
+      ?pending=1 => Chi hien thi bai cho xu ly media (pendingMediaReview=true & HIDDEN)
+      Tra ve: items[] voi moi item:
+        id, authorId, author, content, topics, visibility, mediaUrls[],
+        reactions, comments, status, risk (HIGH|MEDIUM|LOW),
+        pendingMediaReview, mediaModerationScore, mediaModerationLabel,
+        moderationDecisionAt, createdAt
+      Risk tinh toan:
+        HIGH = noi dung chua "school|address|phone|private|secret"
+        MEDIUM = status = HIDDEN
+        LOW = mac dinh
+  - PATCH /api/admin/posts/:id/status   (updatePostStatus)
+      Body: { status: "PUBLISHED" | "HIDDEN" | "DELETED", note: "..." }
+      Tac dong:
+        - PUBLISHED: Cho phep bai, gui thong bao den tac gia, broadcast feed:changed
+        - HIDDEN: An bai, gui thong bao den tac gia
+        - DELETED: Xoa bai, gui thong bao den tac gia
+      Ghi nhan: moderationDecisionAt, moderationDecisionBy, moderationDecisionNote
+  - GET /api/admin/comments?postId=    (listComments)
+      Chi lay comments thuoc 1 bai viet (postId)
+
+Binh luan (Comments) - chua co trang rieng, xem trong modal Posts:
+  - PATCH /api/admin/comments/:id/status
+      Body: { status: "PUBLISHED" | "HIDDEN" | "DELETED" }
+
+Dropdown loc tren trang Posts:
+  - All: Tat ca bai viet
+  - Awaiting media review: pendingMediaReview=true (bai bi an do chua duyet media)
+  - Published: Da xuat ban
+  - Flagged-Hidden: Bi an
+  - Deleted: Da xoa
+
+================================================================================
+PHAN 5 — NGUOI DUNG (USERS)
+================================================================================
+Trang: UsersPage.jsx
+API:
+  - GET /api/admin/users?q=            (listUsers)
+      ?q= <search term> (tim kiem theo displayName hoac username, khong phan biet hoa)
+      Tra ve: items[] voi moi user:
+        id, displayName, username, avatarUrl, age, role,
+        status (ACTIVE|WATCHLIST|SUSPENDED), isActive,
+        friends (so luong ban be), posts (so bai dang),
+        risk (LOW|MEDIUM)
+  - PATCH /api/admin/users/:id/status (updateUserStatus)
+      Body: { status: "ACTIVE" | "WATCHLIST" | "SUSPENDED" }
+      Tac dong:
+        - ACTIVE: Cho phep hoat dong (isActive=true)
+        - WATCHLIST: Theo doi dac biet (isActive=true, moderationStatus=WATCHLIST)
+        - SUSPENDED: Khoa tai khoan (isActive=false, moderationStatus=SUSPENDED)
+
+Nut hanh dong tren user:
+  - Activate: Dat thanh ACTIVE
+  - Watch: Dat thanh WATCHLIST
+  - Suspend: Dat thanh SUSPENDED
+
+================================================================================
+PHAN 6 — NHOM (GROUPS)
+================================================================================
+Trang: GroupsPage.jsx
+API:
+  - GET /api/admin/groups             (listGroups)
+      Tra ve: items[] voi moi group:
+        id, name, topic, description, members (memberCount),
+        ageRange (vd "7-14"), status (ACTIVE|PAUSED|ARCHIVED), owner
+  - POST /api/admin/groups            (createGroup)
+      Body: { name, topic, description, ageMin=7, ageMax=14 }
+      Admin tao nhom voi vai tro founder
+  - PATCH /api/admin/groups/:id/status (updateGroupStatus)
+      Body: { status: "ACTIVE" | "PAUSED" | "ARCHIVED" }
+      Tac dong:
+        - ACTIVE: Nhom hoat dong binh thuong
+        - PAUSED: Tam dung nhom
+        - ARCHIVED: Luu tru (an khoi danh sach)
+
+Nut hanh dong tren group:
+  - Active/Paused/Archived: Chuyen doi trang thai nhom
+  - Create Group: Form tao nhom moi (name, topic, description, age range)
+
+================================================================================
+PHAN 7 — CHAT MODERATION (TIN NHAN)
+================================================================================
+Trang: MessagesPage.jsx
+API:
+  - GET /api/admin/messages           (listMessages)
+      Tra ve: items[] voi moi message:
+        id, chat (ten chat), sender, snippet (noi dung),
+        severity (HIGH|MEDIUM|LOW), status (SAFE|FLAGGED|REMOVED),
+        createdAt
+      Severity tinh toan:
+        HIGH = noi dung chua "school|address|phone|private|secret|
+               where do you live"
+        MEDIUM = noi dung chua "stop|hate|stupid|spam|link"
+        LOW = mac dinh
+      Status:
+        FLAGGED = severity != LOW (can xem xet)
+        SAFE = LOW
+        REMOVED = da bi xoa (DB status = DELETED)
+  - PATCH /api/admin/messages/:id/status (updateMessageStatus)
+      Body: { status: "SAFE" | "REMOVED" | "DELETED" | "SENT" }
+      Tac dong: SAFE/DISMISS => danh dau an toan; REMOVED/DELETED => xoa noi dung
+
+Nut hanh dong tren message:
+  - Safe: Danh dau tin nhan an toan
+  - Remove: Xoa tin nhan
+
+================================================================================
+PHAN 8 — HO TRO (SUPPORT)
+================================================================================
+Trang: SupportPage.jsx
+API:
+  - GET /api/admin/support?status=     (listSupportThreads)
+      ?status= OPEN | PENDING_USER | RESOLVED | ALL
+      Tra ve: items[] voi moi thread:
+        id, userId, user{id,displayName,username,age},
+        assignedAdmin{id,displayName,username}|null,
+        subject, category, status,
+        lastMessage{}, lastMessageAt, createdAt, updatedAt
+  - GET /api/admin/support/:id/messages (listSupportMessages)
+      Tra ve:
+        thread{} (chi tiet thread)
+        messages[]{ id, threadId, senderId, senderRole, content, createdAt }
+  - POST /api/admin/support/:id/messages (replySupport)
+      Body: { content: "..." }
+      Tac dong:
+        - Tao message voi senderRole='ADMIN'
+        - Chuyen thread.status = 'PENDING_USER'
+        - Gan assignedAdminId = admin hien tai
+        - Gui thong bao den nguoi dung
+        - Emit realtime 'support:message' den nguoi dung
+  - PATCH /api/admin/support/:id/status (updateSupportStatus)
+      Body: { status: "OPEN" | "PENDING_USER" | "RESOLVED" }
+      Tac dong:
+        - Cap nhat trang thai
+        - Gan assignedAdminId
+        - Gui thong bao + emit realtime den nguoi dung
+
+Categories cua support thread:
+  GENERAL | SAFETY | ACCOUNT | TECHNICAL | REPORT
+
+Filter trang thai: ALL / OPEN / PENDING_USER / RESOLVED
+
+================================================================================
+PHAN 9 — THONG BAO (NOTIFICATIONS)
+================================================================================
+Trang: NotificationsPage.jsx
+API:
+  - POST /api/admin/notifications/broadcast (broadcastNotification)
+      Body: { title, body, audience }
+      audience:
+        ALL      - Tat ca nguoi dung
+        CHILDREN - Tre em (role=CHILD)
+        MODERATORS - Admin/Moderator
+        AGE_7_10 - Tre 7-10 tuoi
+        AGE_11_14 - Tre 11-14 tuoi
+      Tra ve: { message, count } (so nguoi nhan)
+
+Lich su: Hien thi danh sach thong bao da gui (luu local)
+
+================================================================================
+PHAN 10 — HUY HIEU (BADGES)
+================================================================================
+Trang: BadgesPage.jsx
+API:
+  - GET /api/admin/badges             (listBadges)
+      Tra ve: items[] voi moi badge:
+        id, name, rule, enabled, earned (so nguoi da dat duoc)
+      4 badges hien tai:
+        1. First Post    - Tao 1 bai viet
+        2. Friendly      - Ket ban 3 nguoi
+        3. Group Explorer - Tham gia 1 nhom
+        4. Safety Helper - Gui 1 bao cao
+
+Luu y: Toggle Enable/Disable hien tai chi la UI (chua co PATCH backend)
+
+================================================================================
+PHAN 11 — THU VIEN MEDIA (MEDIA)
+================================================================================
+Trang: MediaPage.jsx
+API:
+  - GET /api/admin/media?status=       (listMedia)
+      ?status= APPROVED | REVIEW | BLOCKED | REMOVED | ALL
+      Tra ve: items[] voi moi media:
+        id, owner, ownerId, source (Post|Profile|Cover|Chat),
+        sourceType, sourceId, url, resourceType,
+        status, moderation{}, createdAt
+      Bao gom:
+        - MediaAsset (uploaded files)
+        - User avatars (id="avatar:<userId>")
+        - Post inline images (id="<postId>:<index>")
+  - PATCH /api/admin/media/:id/status (updateMediaStatus)
+      Body: { status: "APPROVED" | "REVIEW" | "REMOVED" }
+      id co the la:
+        - ObjectId thuc: Cap nhat MediaAsset
+        - "avatar:<userId>": Xoa avatar nguoi dung
+        - "<postId>:<index>": Xoa 1 URL khoi mediaUrls cua post
+      Tac dong REMOVED: goi detachMediaFromSource + destroyMediaAsset
+
+Nut hanh dong tren media:
+  - Approve: Danh dau hop le
+  - Remove: Xoa media (nguy hiem - xoa khoi Cloudinary)
+
+================================================================================
+PHAN 12 — CAU HINH AN TOAN (SAFETY RULES)
+================================================================================
+Trang: SafetyPage.jsx
+API:
+  - GET /api/admin/safety              (getSafety)
+      Tra ve: { safeSearchDefault, autoHideHighRisk, rules[] }
+  - PATCH /api/admin/safety            (updateSafety)
+      Body: { safeSearchDefault, autoHideHighRisk, rules: [...] }
+      Quy tac duoc luu trong AppSetting voi key='safety_config'
+
+2 toggles:
+  - Safe search default: Bat/tat loc noi dung an toan mac dinh
+  - Auto hide high risk: Tu dong an noi dung co risk cao
+
+Rules list: Danh sach quy tac cuoc thi ( VD: "No bullying", "Do not share
+phone number" ) - co the them/xoa/quan ly
+
+================================================================================
+PHAN 13 — LOG Kiem Toan (AUDIT LOG)
+================================================================================
+Trang: AuditPage.jsx
+API:
+  - GET /api/admin/audit?page=&limit=  (listAudit)
+      ?page=1 (mac dinh), ?limit=20 (1-100)
+      Tra ve:
+        items[]: { id, actorId, actorUsername, action, targetType,
+                   targetId, _targetUser{}, metadata{}, createdAt }
+        total, page, totalPages
+      Lookup: Tu dong resolve user trong metadata de hien thi targetDisplayName
+
+Filter tren UI:
+  - Loc theo targetType (POST, USER, GROUP, MEDIA...)
+  - Tim kiem text (client-side)
+  - Phan trang (20 item/trang)
+
+================================================================================
+PHAN 14 — THONG KE AI (AI STATS) [MOI THEM]
+================================================================================
+Trang: CHUA CO (can them trong AdminPanel)
+API:
+  - GET /api/admin/ai-stats           (listAiStats)
+      Tra ve:
+        server{}: {
+          status (online|offline),
+          modelLoaded, whisperLoaded,
+          labels[], unsafeLabels[],
+          maxVideoFrames, modelPath
+        }
+        summary{}: {
+          pendingFlags, confirmed24h, dismissed24h,
+          total30d, flagged24h, blockedMedia30d, reviewedMedia30d
+        }
+        bySource{}: { POST: 12, MESSAGE: 8, COMMENT: 5, MEDIA: 3, USER: 1 }
+        byProvider{}: { CNN_SERVICE: 10, NSFWJS: 5, KEYWORD_FILTER: 8, ... }
+        topLabels[]: [{ label, count, avgScore }]
+        recentFlags[]: [{ id, sourceType, sourceId, flaggedBy,
+                          categories, score, decision, unsafeLabel,
+                          status, createdAt }]
+
+================================================================================
+                        DANH SACH NUT & HANH DONG
+================================================================================
+
+TRANG DASHBOARD:
+  [Chi hien thi, khong co nut tac dong truc tiep]
+
+TRANG REPORTS:
+  [Reviewing]   - Dat bao cao thanh REVIEWING
+  [Resolved]    - Danh dau da xu ly
+  [Dismissed]   - Loai bo bao cao
+
+TRANG POSTS & COMMENTS:
+  [Publish]     - Xuat ban bai viet (PATCH PUBLISHED)
+  [Hide]        - An bai viet (PATCH HIDDEN)
+  [Delete]      - Xoa bai viet (PATCH DELETED)
+  [View Modal]  - Xem chi tiet + binh luan (modal chua co nut status comment)
+
+TRANG USERS:
+  [Activate]    - Dat thanh ACTIVE
+  [Watch]       - Dat thanh WATCHLIST
+  [Suspend]     - Khoa tai khoan (SUSPENDED)
+
+TRANG GROUPS:
+  [Create Group] - Tao nhom moi (POST)
+  [Active]       - Chuyen thanh ACTIVE
+  [Paused]       - Tam dung (PAUSED)
+  [Archived]     - Luu tru (ARCHIVED)
+
+TRANG MESSAGES:
+  [Safe]        - Danh dau an toan
+  [Remove]      - Xoa tin nhan
+
+TRANG SUPPORT:
+  [Reply]       - Gui tra loi (POST message)
+  [Open]        - Dat thanh OPEN
+  [Pending]     - Dat thanh PENDING_USER
+  [Resolved]    - Dat thanh RESOLVED
+
+TRANG NOTIFICATIONS:
+  [Send]        - Gui thong bao broadcast (POST)
+
+TRANG BADGES:
+  [Toggle Enable/Disable] - Hien tai chi UI (chua co PATCH backend)
+
+TRANG MEDIA:
+  [Approve]     - Chap nhan media
+  [Remove]      - Xoa media (nguy hiem)
+
+TRANG SAFETY:
+  [Save]        - Luu cau hinh (PATCH safety)
+  [Add Rule]    - Them quy tac moi
+  [Remove Rule] - Xoa quy tac
+
+TRANG AUDIT:
+  [Next/Prev]   - Phan trang
+  [Filter]      - Loc theo targetType
+
+================================================================================
+                    CAC DIEU CAN THEM/SUA O FRONTEND
+================================================================================
+
+1. [CAN THEM] Trang AI Stats:
+   - Chua co trang rieng cho AI moderation stats
+   - Can tao trang AI Stats moi goi GET /api/admin/ai-stats
+   - Hien thi: Server health, summary cards, chart theo nguon (POST/MESSAGE/MEDIA),
+     chart theo provider (CNN/NSFWJS/Keyword), top labels, timeline flags
+
+2. [CAN THEM] Nut Publish/Hide/Delete tren Comments:
+   - Modal Posts hien chi co nut cho posts, chua co nut thay doi trang thai comment
+
+3. [CAN THEM] Nut Publish/Hide tren ContentPage:
+   - Hien tai ContentPage chi co PATCH posts, chua co PATCH comments
+
+4. [CAN THEM] Toggle Badges PATCH:
+   - GET badges da co, nhung PATCH chua co trong API service va backend
+
+5. [CAN THEM] Navigation items:
+   - AdminLayout sidebar hien co 12 muc, co the them "AI Moderation" lam muc 13
+
+================================================================================
+                        MO HINH DU LIEU CHINH
+================================================================================
+
+AuditLog      - Log tat ca hanh dong admin (actorId, action, targetType, metadata)
+Report        - Bao cao (USER/AUTO_MODERATION), urgency 1-5, category, status
+FlaggedContent- Flag tu AI (NSFWJS/CNN/Keyword/USER_REPORT), score 0-1, status
+MediaAsset    - Tap tin da upload (Cloudinary), co moderation subdocument
+AppSetting    - Key-value store (hien chi dung cho safety_config)
+SupportThread - Thread ho tro (user tao, admin xu ly)
+SupportMessage- Tin nhan trong thread ho tro
+User          - Tai khoan (role, moderationStatus, isActive)
+
+================================================================================

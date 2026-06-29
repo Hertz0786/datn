@@ -2,15 +2,20 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../app/scaffold_with_bottom_nav.dart';
 import '../../core/models/feed_post.dart';
 import '../../core/models/public_user.dart';
 import '../../core/models/search_results.dart';
+import '../../core/models/trending_topic.dart';
 import '../../core/network/api_exception.dart';
+import '../../core/services/posts_api.dart';
 import '../../core/services/search_api.dart';
 import '../../shared/widgets/empty_state_view.dart';
 import '../../shared/widgets/loading_state_view.dart';
 import '../../shared/widgets/section_header.dart';
 import '../feed/post_detail_screen.dart';
+import '../feed/topic_discovery_screen.dart';
+import '../feed/topic_feed_screen.dart';
 import '../friends/friend_profile_screen.dart';
 import '../groups/group_detail_screen.dart';
 import '../groups/group_info.dart';
@@ -29,17 +34,20 @@ class _SearchScreenState extends State<SearchScreen> {
 
   Timer? _debounce;
   bool _isLoading = true;
+  bool _isLoadingTopics = true;
   String _selectedQuickZone = 'All';
   SearchResults _results = const SearchResults(
     users: <PublicUser>[],
     groups: <GroupInfo>[],
     posts: <FeedPost>[],
   );
+  List<TrendingTopic> _trendingTopics = <TrendingTopic>[];
 
   @override
   void initState() {
     super.initState();
     _loadResults();
+    _loadTrendingTopics();
   }
 
   @override
@@ -96,6 +104,34 @@ class _SearchScreenState extends State<SearchScreen> {
     }
   }
 
+  Future<void> _loadTrendingTopics() async {
+    try {
+      final List<TrendingTopic> items = await PostsApi.instance.trendingTopics(limit: 8);
+      if (!mounted) return;
+      setState(() => _trendingTopics = items);
+    } catch (_) {
+      if (mounted) setState(() => _trendingTopics = _fallbackTopics);
+    } finally {
+      if (mounted) setState(() => _isLoadingTopics = false);
+    }
+  }
+
+  void _openTopic(TrendingTopic topic) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => TopicFeedScreen(topic: topic.topic),
+      ),
+    );
+  }
+
+  void _openTopicDiscovery() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const TopicDiscoveryScreen()),
+    );
+  }
+
   String get _typeParam {
     switch (_selectedQuickZone) {
       case 'Friends':
@@ -123,15 +159,17 @@ class _SearchScreenState extends State<SearchScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => FriendProfileScreen(
-          userId: user.id,
-          name: user.displayName,
-          age: user.age,
-          favoriteTopic: user.favoriteTopics.isEmpty
-              ? 'Music'
-              : user.favoriteTopics.first,
-          avatarLabel: user.initials,
-          avatarUrl: user.avatarUrl,
+        builder: (_) => PushedScreenShell(
+          child: FriendProfileScreen(
+            userId: user.id,
+            name: user.displayName,
+            age: user.age,
+            favoriteTopic: user.favoriteTopics.isEmpty
+                ? 'Music'
+                : user.favoriteTopics.first,
+            avatarLabel: user.initials,
+            avatarUrl: user.avatarUrl,
+          ),
         ),
       ),
     );
@@ -280,20 +318,44 @@ class _SearchScreenState extends State<SearchScreen> {
             SectionHeader(
               title: 'Trending topics',
               actionText: 'See more',
-              onAction: _openAdvancedSearch,
+              onAction: _openTopicDiscovery,
             ),
             const SizedBox(height: 10),
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: const [
-                _TopicChip(label: 'Science', color: Color(0xFF9BE7FF)),
-                _TopicChip(label: 'Drawing', color: Color(0xFFFFC5E6)),
-                _TopicChip(label: 'Coding', color: Color(0xFFFFE59E)),
-                _TopicChip(label: 'Music', color: Color(0xFFBEEBD0)),
-                _TopicChip(label: 'Story', color: Color(0xFFD5C6FF)),
-              ],
-            ),
+            if (_isLoadingTopics)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Center(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              )
+            else if (_trendingTopics.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  'No trending topics yet.',
+                  style: TextStyle(
+                    color: Colors.grey.shade600,
+                    fontSize: 13,
+                  ),
+                ),
+              )
+            else
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: _trendingTopics.map((item) {
+                  return _TrendingTopicChip(
+                    topic: item.topic,
+                    postCount: item.postCount,
+                    color: _topicColor(_trendingTopics.indexOf(item)),
+                    onTap: () => _openTopic(item),
+                  );
+                }).toList(),
+              ),
             const SizedBox(height: 16),
             InkWell(
               onTap: () {
@@ -563,5 +625,90 @@ class _TopicChip extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+Color _topicColor(int index) {
+  const List<Color> colors = [
+    Color(0xFF9BE7FF),
+    Color(0xFFFFC5E6),
+    Color(0xFFFFE59E),
+    Color(0xFFBEEBD0),
+    Color(0xFFD5C6FF),
+    Color(0xFFFFC5A3),
+    Color(0xFFA5E6D4),
+    Color(0xFFD4B8FF),
+  ];
+  return colors[index % colors.length];
+}
+
+const List<TrendingTopic> _fallbackTopics = <TrendingTopic>[
+  TrendingTopic(topic: 'Science', postCount: 0),
+  TrendingTopic(topic: 'Drawing', postCount: 0),
+  TrendingTopic(topic: 'Coding', postCount: 0),
+  TrendingTopic(topic: 'Music', postCount: 0),
+  TrendingTopic(topic: 'Story', postCount: 0),
+];
+
+class _TrendingTopicChip extends StatelessWidget {
+  const _TrendingTopicChip({
+    required this.topic,
+    required this.postCount,
+    required this.color,
+    required this.onTap,
+  });
+
+  final String topic;
+  final int postCount;
+  final Color color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(18),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              topic,
+              style: const TextStyle(
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF1A3D7C),
+              ),
+            ),
+            if (postCount > 0) ...[
+              const SizedBox(width: 4),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(99),
+                ),
+                child: Text(
+                  _formatCount(postCount),
+                  style: const TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatCount(int count) {
+    if (count >= 1000) return '${(count / 1000).toStringAsFixed(1)}k';
+    return count.toString();
   }
 }

@@ -1,7 +1,5 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const crypto = require('crypto');
-const { OAuth2Client } = require('google-auth-library');
 
 const User = require('../models/User');
 const PasswordResetToken = require('../models/PasswordResetToken');
@@ -190,100 +188,7 @@ router.post(
   }),
 );
 
-// ---------- Google login / register ----------
-
-let googleClient = null;
-function getGoogleClient() {
-  if (!googleClient && process.env.GOOGLE_CLIENT_ID) {
-    googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
-  }
-  return googleClient;
-}
-
-router.post(
-  '/google',
-  asyncHandler(async (req, res) => {
-    const { idToken } = req.body;
-
-    if (!idToken) {
-      return res.status(400).json({ message: 'idToken is required.' });
-    }
-
-    const client = getGoogleClient();
-    if (!client) {
-      return res.status(503).json({ message: 'Google login is not configured.' });
-    }
-
-    let payload;
-    try {
-      const ticket = await client.verifyIdToken({
-        idToken,
-        audience: process.env.GOOGLE_CLIENT_ID,
-      });
-      payload = ticket.getPayload();
-    } catch (error) {
-      return res.status(401).json({ message: 'Invalid Google token.' });
-    }
-
-    const { email, name: googleName, sub: googleId } = payload;
-    if (!email) {
-      return res.status(400).json({ message: 'Google account has no email.' });
-    }
-
-    let user = await User.findOne({ googleId });
-    if (!user) {
-      user = await User.findOne({ email: email.toLowerCase() });
-      if (user && user.googleId) {
-        return res.status(409).json({ message: 'This email is already registered with another account.' });
-      }
-    }
-
-    if (user) {
-      if (!user.googleId) {
-        user.googleId = googleId;
-        user.loginProvider = 'GOOGLE';
-        if (!user.avatarUrl && payload.picture) {
-          user.avatarUrl = payload.picture;
-        }
-        await user.save();
-      }
-    } else {
-      const baseUsername = (email.split('@')[0] || 'user').toLowerCase().replace(/[^a-z0-9_]/g, '_');
-      let username = baseUsername;
-      let counter = 1;
-      while (await User.findOne({ username })) {
-        username = `${baseUsername}_${counter}`;
-        counter++;
-      }
-
-      user = await User.create({
-        displayName: googleName || email.split('@')[0],
-        username,
-        age: 10,
-        passwordHash: null,
-        email: email.toLowerCase(),
-        emailVerified: true,
-        googleId,
-        loginProvider: 'GOOGLE',
-        avatarUrl: payload.picture || '',
-      });
-    }
-
-    if (!user.isActive) {
-      return res.status(403).json({ message: 'Account is inactive.' });
-    }
-
-    const token = createAuthToken(user);
-
-    return res.json({
-      message: 'Logged in successfully.',
-      token,
-      user: toPublicUser(user),
-    });
-  }),
-);
-
-// ---------- Login (supports email or username) ----------
+// ---------- Login (username only) ----------
 
 router.post(
   '/login',
@@ -291,42 +196,57 @@ router.post(
     const { username, password } = req.body;
 
     if (!username || !password) {
-      return res
-        .status(400)
-        .json({ message: 'username and password are required.' });
+      return res.status(400).json({
+        code: 'MISSING_CREDENTIALS',
+        message: 'Please enter both username and password.',
+      });
     }
 
     const loginValue = String(username).toLowerCase().trim();
-    const isEmail = loginValue.includes('@');
 
-    let user;
-    if (isEmail) {
-      user = await User.findOne({ email: loginValue });
-    } else {
-      user = await User.findOne({ username: loginValue });
+    // Login is username-only: reject anything that looks like an email so
+    // we don't accidentally log users in by their email address.
+    if (loginValue.includes('@')) {
+      return res.status(400).json({
+        code: 'USERNAME_INVALID',
+        message: 'Please log in with your username, not your email.',
+      });
     }
+
+    const user = await User.findOne({ username: loginValue });
 
     if (!user) {
-      return res.status(401).json({ message: 'Invalid credentials.' });
-    }
-
-    if (user.loginProvider === 'GOOGLE') {
-      return res.status(401).json({
-        message: 'This account uses Google login. Please sign in with Google.',
+      // Username not found — return a distinct code so the client can show
+      // a clear error message ("Account does not exist") instead of a
+      // generic "wrong credentials" notice.
+      return res.status(404).json({
+        code: 'USER_NOT_FOUND',
+        message: 'Account does not exist.',
       });
     }
 
     if (!user.passwordHash) {
-      return res.status(401).json({ message: 'Invalid credentials.' });
+      // Username exists but no local password set (legacy / external account).
+      // Treat as bad password to avoid leaking which case happened.
+      return res.status(401).json({
+        code: 'BAD_PASSWORD',
+        message: 'Incorrect password.',
+      });
     }
 
     const passwordMatched = await bcrypt.compare(password, user.passwordHash);
     if (!passwordMatched) {
-      return res.status(401).json({ message: 'Invalid credentials.' });
+      return res.status(401).json({
+        code: 'BAD_PASSWORD',
+        message: 'Incorrect password.',
+      });
     }
 
     if (!user.isActive) {
-      return res.status(403).json({ message: 'Account is inactive.' });
+      return res.status(403).json({
+        code: 'ACCOUNT_INACTIVE',
+        message: 'This account is inactive. Please contact support.',
+      });
     }
 
     const token = createAuthToken(user);
@@ -475,6 +395,29 @@ router.get(
     }
 
     return res.json({ user: toPublicUser(user) });
+  }),
+);
+
+// ---------- /me/email ----------
+// Returns the current user's verified email address. Email is
+// intentionally excluded from the default `/me` payload (it is PII).
+// This endpoint is only called when the user explicitly opens the
+// change-password flow, and only returns the address when it has been
+// verified so we can reliably deliver an OTP there.
+router.get(
+  '/me/email',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const user = await User.findById(req.user.id);
+    if (!user || !user.isActive) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    const verified = Boolean(user.email && user.emailVerified);
+    return res.json({
+      hasEmail: verified,
+      email: verified ? user.email : null,
+    });
   }),
 );
 

@@ -10,6 +10,7 @@ import '../features/assistant/llm_assistant_button.dart';
 import '../features/chat/chat_list_screen.dart';
 import '../features/feed/create_post_screen.dart';
 import '../features/feed/home_screen.dart';
+import '../features/feed/widgets/moderation_dialog.dart';
 import '../features/notifications/notifications_screen.dart';
 import '../features/profile/profile_screen.dart';
 import '../features/search/search_screen.dart';
@@ -41,6 +42,10 @@ class _AppShellState extends State<AppShell> {
       _handlePostModerationDecided,
     );
     RealtimeService.instance.on(
+      'comment:moderation_decided',
+      _handleCommentModerationDecided,
+    );
+    RealtimeService.instance.on(
       'post:pending_media_review',
       _handlePostPendingMediaReview,
     );
@@ -58,6 +63,10 @@ class _AppShellState extends State<AppShell> {
     RealtimeService.instance.off(
       'post:moderation_decided',
       _handlePostModerationDecided,
+    );
+    RealtimeService.instance.off(
+      'comment:moderation_decided',
+      _handleCommentModerationDecided,
     );
     RealtimeService.instance.off(
       'post:pending_media_review',
@@ -95,10 +104,6 @@ class _AppShellState extends State<AppShell> {
     if (!mounted) {
       return;
     }
-    setState(() {
-      _unreadNotifications += 1;
-    });
-
     if (payload is! Map) {
       return;
     }
@@ -111,9 +116,98 @@ class _AppShellState extends State<AppShell> {
     final AppNotification notification = AppNotification.fromJson(
       Map<String, dynamic>.from(rawNotification),
     );
-    if (notification.type == 'FRIEND_REQUEST_RECEIVED') {
-      // User responds to friend requests from the notifications tab.
+
+    // CHAT_MESSAGE notifications are handled separately via the
+    // chat:message realtime event — they only bump the message tab
+    // badge, not the notifications bell.
+    if (notification.type == 'CHAT_MESSAGE') {
+      return;
     }
+
+    setState(() {
+      _unreadNotifications += 1;
+    });
+
+    if (notification.type == 'FRIEND_REQUEST_RECEIVED') {
+      _showRealtimeSnack(
+        title: notification.title,
+        body: notification.body,
+        icon: Icons.person_add_alt_1_rounded,
+      );
+      return;
+    }
+
+    if (notification.type == 'FRIEND_REQUEST_ACCEPTED') {
+      _showRealtimeSnack(
+        title: notification.title,
+        body: notification.body,
+        icon: Icons.celebration_rounded,
+      );
+      return;
+    }
+
+    if (notification.type == 'FRIEND_REQUEST_REJECTED') {
+      _showRealtimeSnack(
+        title: notification.title,
+        body: notification.body,
+        icon: Icons.sentiment_dissatisfied_rounded,
+      );
+      return;
+    }
+  }
+
+  void _showRealtimeSnack({
+    required String title,
+    required String body,
+    required IconData icon,
+  }) {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 4),
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.all(12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+        ),
+        content: Row(
+          children: [
+            Icon(icon, color: Colors.white),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                    ),
+                  ),
+                  if (body.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        body,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          height: 1.3,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _handleChatMessage(dynamic payload) {
@@ -155,7 +249,7 @@ class _AppShellState extends State<AppShell> {
 
   void _handlePostModerationDecided(dynamic payload) {
     // The admin has approved or deleted a previously-flagged post.
-    // We surface the verdict (in Vietnamese) so the user knows what
+    // We surface the verdict (in English) so the user knows what
     // happened without having to pull-to-refresh the feed.
     if (!mounted || payload is! Map) {
       return;
@@ -164,17 +258,82 @@ class _AppShellState extends State<AppShell> {
     String message = (payload['message'] ?? '').toString();
     if (message.isEmpty) {
       if (status == 'PUBLISHED') {
-        message = 'Bài đăng của bạn đã được admin duyệt và hiển thị trên bảng tin.';
+        message = 'Your post was approved by admin and is now visible on the feed.';
       } else if (status == 'DELETED') {
-        message = 'Bài đăng của bạn đã bị xóa vì chứa hình ảnh không phù hợp.';
+        message = 'Your post was removed because it contains inappropriate imagery.';
       } else {
-        message = 'Bài đăng của bạn đã được cập nhật trạng thái.';
+        message = 'Your post status was updated.';
       }
     }
+
+    if (shouldShowModerationDialog(status)) {
+      _showModerationDecisionDialog(
+        kind: ModerationDecisionKind.post,
+        status: status,
+        message: message,
+      );
+      return;
+    }
+
     final bool approved = status == 'PUBLISHED';
     _showGlobalSnack(
       message,
       color: approved ? const Color(0xFF0A7550) : const Color(0xFFA01843),
+    );
+  }
+
+  void _handleCommentModerationDecided(dynamic payload) {
+    // Mirror of the post handler — when an admin approves or removes
+    // a comment we open the same English moderation dialog so the
+    // author knows why their content was hidden and has a direct path
+    // to contact admin via SupportChatScreen.
+    if (!mounted || payload is! Map) {
+      return;
+    }
+    final String status = (payload['status'] ?? '').toString().toUpperCase();
+    String message = (payload['message'] ?? '').toString();
+    if (message.isEmpty) {
+      if (status == 'PUBLISHED') {
+        message = 'Your comment was approved by admin.';
+      } else if (status == 'DELETED') {
+        message = 'Your comment was removed because it is inappropriate.';
+      } else {
+        message = 'Your comment status was updated.';
+      }
+    }
+
+    if (shouldShowModerationDialog(status)) {
+      _showModerationDecisionDialog(
+        kind: ModerationDecisionKind.comment,
+        status: status,
+        message: message,
+      );
+      return;
+    }
+
+    final bool approved = status == 'PUBLISHED';
+    _showGlobalSnack(
+      message,
+      color: approved ? const Color(0xFF0A7550) : const Color(0xFFA01843),
+    );
+  }
+
+  void _showModerationDecisionDialog({
+    required ModerationDecisionKind kind,
+    required String status,
+    required String message,
+  }) {
+    if (!mounted) {
+      return;
+    }
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => ModerationDecisionDialog(
+        kind: kind,
+        status: status,
+        serverMessage: message,
+      ),
     );
   }
 

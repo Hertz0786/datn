@@ -87,14 +87,16 @@ class AuthApi {
     );
   }
 
-  Future<PublicUser> googleLogin({required String idToken}) async {
-    final dynamic response = await _api.post(
-      '/api/auth/google',
-      authRequired: false,
-      body: <String, dynamic>{'idToken': idToken},
-    );
-
-    return _storeSessionFromAuthResponse(response);
+  /// Returns the current user's verified email, used by the in-app
+  /// change-password flow so the child knows which mailbox will
+  /// receive the OTP. Returns null when the account has no verified
+  /// email — callers must show an instructional message in that case.
+  Future<String?> getMyEmail() async {
+    final dynamic response = await _api.get('/api/auth/me/email');
+    final Map<String, dynamic> data = _toMap(response);
+    final bool hasEmail = data['hasEmail'] == true;
+    final String? email = hasEmail ? data['email']?.toString() : null;
+    return (email != null && email.isNotEmpty) ? email : null;
   }
 
   Future<PublicUser> getMe() async {

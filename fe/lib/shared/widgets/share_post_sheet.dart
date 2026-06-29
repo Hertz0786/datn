@@ -2,9 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/models/feed_post.dart';
 import '../../core/models/public_user.dart';
-import '../../core/network/api_exception.dart';
 import '../../core/services/chats_api.dart';
-import '../../core/services/posts_api.dart';
 import '../../core/services/friends_api.dart';
 import '../../shared/widgets/user_avatar.dart';
 
@@ -39,47 +37,11 @@ class SharePostSheet extends StatefulWidget {
 }
 
 class _SharePostSheetState extends State<SharePostSheet> {
-  bool _isSharingToProfile = false;
   bool _isChoosingFriend = false;
   List<PublicUser> _friends = const [];
   bool _isLoadingFriends = true;
   String? _sendingToUserId;
   String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-  }
-
-  Future<void> _shareToProfile() async {
-    if (_isSharingToProfile) return;
-
-    setState(() {
-      _isSharingToProfile = true;
-      _error = null;
-    });
-
-    try {
-      await PostsApi.instance.sharePost(widget.post.id);
-      if (!mounted) return;
-      Navigator.pop(context, ShareResult.success);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Post shared to your profile!')),
-      );
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _isSharingToProfile = false;
-        _error = e.message;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _isSharingToProfile = false;
-        _error = e.toString();
-      });
-    }
-  }
 
   Future<void> _loadFriends() async {
     setState(() {
@@ -121,12 +83,6 @@ class _SharePostSheetState extends State<SharePostSheet> {
           content: Text('Post sent to ${friend.displayName.isNotEmpty ? friend.displayName : friend.username}!'),
         ),
       );
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _sendingToUserId = null;
-        _error = e.message;
-      });
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -197,15 +153,6 @@ class _SharePostSheetState extends State<SharePostSheet> {
               const SizedBox(height: 12),
             ],
             if (!_isChoosingFriend) ...[
-              _ShareOptionTile(
-                icon: Icons.person_add_rounded,
-                iconColor: const Color(0xFF33B8FF),
-                title: 'Share to your profile',
-                subtitle: 'Post this to your own feed',
-                isLoading: _isSharingToProfile,
-                onTap: _shareToProfile,
-              ),
-              const SizedBox(height: 10),
               _ShareOptionTile(
                 icon: Icons.send_rounded,
                 iconColor: const Color(0xFF7A5CFF),
@@ -345,7 +292,6 @@ class _ShareOptionTile extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.onTap,
-    this.isLoading = false,
   });
 
   final IconData icon;
@@ -353,12 +299,11 @@ class _ShareOptionTile extends StatelessWidget {
   final String title;
   final String subtitle;
   final VoidCallback onTap;
-  final bool isLoading;
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
-      onTap: isLoading ? null : onTap,
+      onTap: onTap,
       borderRadius: BorderRadius.circular(16),
       child: Container(
         padding: const EdgeInsets.all(14),
@@ -375,13 +320,7 @@ class _ShareOptionTile extends StatelessWidget {
                 color: iconColor.withValues(alpha: 0.14),
                 shape: BoxShape.circle,
               ),
-              child: isLoading
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Icon(icon, color: iconColor, size: 20),
+              child: Icon(icon, color: iconColor, size: 20),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -407,9 +346,9 @@ class _ShareOptionTile extends StatelessWidget {
                 ],
               ),
             ),
-            Icon(
+            const Icon(
               Icons.chevron_right_rounded,
-              color: isLoading ? const Color(0xFFD7E7FF) : const Color(0xFF7A8BBF),
+              color: Color(0xFF7A8BBF),
             ),
           ],
         ),

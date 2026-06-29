@@ -11,8 +11,8 @@ async function bootstrap() {
     const server = http.createServer(app);
     initRealtime(server);
 
-    server.listen(env.port, () => {
-      console.log(`API listening on http://localhost:${env.port}`);
+    server.listen(env.port, '0.0.0.0', () => {
+      console.log(`API listening on http://0.0.0.0:${env.port}`);
     });
   } catch (error) {
     console.error('Failed to start server:', error.message);

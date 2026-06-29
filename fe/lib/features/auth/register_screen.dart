@@ -6,7 +6,6 @@ import 'package:flutter/services.dart';
 import '../../app/app_shell.dart';
 import '../../core/network/api_exception.dart';
 import '../../core/services/auth_api.dart';
-import '../onboarding/topic_preferences_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -194,22 +193,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
         return;
       }
 
-      await Navigator.push<List<String>>(
-        context,
-        MaterialPageRoute(
-          builder: (_) => TopicPreferencesScreen(
-            initialTopics: const <String>[],
-            isFirstTime: true,
-          ),
-          fullscreenDialog: true,
-        ),
-      );
-
-      if (!mounted) {
-        _isSubmitting = false;
-        return;
-      }
-
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(builder: (_) => const AppShell()),
@@ -259,24 +242,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     IconButton(
                       onPressed: () => Navigator.pop(context),
                       icon: const Icon(Icons.arrow_back_rounded),
-                    ),
-                    const Spacer(),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.7),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: const Text(
-                        'Create account',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFF1A3D7C),
-                        ),
-                      ),
                     ),
                   ],
                 ),
@@ -532,53 +497,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
             fontSize: 13,
           ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: List.generate(6, (index) {
-            return Container(
-              width: 46,
-              height: 52,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                  color: const Color(0xFF33B8FF).withValues(alpha: 0.4),
-                  width: 1.5,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFF33B8FF).withValues(alpha: 0.08),
-                    blurRadius: 6,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: TextField(
-                controller: _otpControllers[index],
-                focusNode: _otpFocusNodes[index],
-                keyboardType: TextInputType.number,
-                textAlign: TextAlign.center,
-                maxLength: 1,
-                style: const TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF1A3D7C),
-                ),
-                decoration: const InputDecoration(
-                  border: InputBorder.none,
-                  counterText: '',
-                ),
-                inputFormatters: [
-                  FilteringTextInputFormatter.digitsOnly,
-                ],
-                onChanged: (value) => _onOtpChanged(value, index),
-                onSubmitted: (_) => _onOtpKey('', index),
-              ),
+            return _OtpBox(
+              controller: _otpControllers[index],
+              focusNode: _otpFocusNodes[index],
+              onChanged: (value) => _onOtpChanged(value, index),
+              onSubmitted: (_) => _onOtpKey('', index),
             );
           }),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 12),
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -587,7 +518,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ? 'Resend in ${_countdownSeconds}s'
                   : 'Didn\'t receive the code?',
               style: TextStyle(
-                fontSize: 12,
+                fontSize: 13,
                 color: _countdownSeconds > 0
                     ? color.withValues(alpha: 0.6)
                     : const Color(0xFF3A5A8A),
@@ -601,7 +532,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 child: Text(
                   'Resend',
                   style: TextStyle(
-                    fontSize: 12,
+                    fontSize: 13,
                     color: color,
                     fontWeight: FontWeight.w700,
                   ),
@@ -615,7 +546,103 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 }
 
-class _EmailSection extends StatefulWidget {
+class _OtpBox extends StatefulWidget {
+  const _OtpBox({
+    required this.controller,
+    required this.focusNode,
+    required this.onChanged,
+    required this.onSubmitted,
+  });
+
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final ValueChanged<String> onChanged;
+  final ValueChanged<String> onSubmitted;
+
+  @override
+  State<_OtpBox> createState() => _OtpBoxState();
+}
+
+class _OtpBoxState extends State<_OtpBox> {
+  bool _isFocused = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.focusNode.addListener(_onFocusChange);
+  }
+
+  void _onFocusChange() {
+    setState(() {
+      _isFocused = widget.focusNode.hasFocus;
+    });
+  }
+
+  @override
+  void dispose() {
+    widget.focusNode.removeListener(_onFocusChange);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      width: 50,
+      height: 60,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: _isFocused
+              ? const Color(0xFF33B8FF)
+              : const Color(0xFF33B8FF).withValues(alpha: 0.3),
+          width: _isFocused ? 2.5 : 1.5,
+        ),
+        boxShadow: _isFocused
+            ? [
+                BoxShadow(
+                  color: const Color(0xFF33B8FF).withValues(alpha: 0.25),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ]
+            : [
+                BoxShadow(
+                  color: const Color(0xFF33B8FF).withValues(alpha: 0.08),
+                  blurRadius: 6,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+      ),
+      child: TextField(
+        controller: widget.controller,
+        focusNode: widget.focusNode,
+        keyboardType: TextInputType.number,
+        textAlign: TextAlign.center,
+        maxLength: 1,
+        style: const TextStyle(
+          fontSize: 26,
+          fontWeight: FontWeight.w800,
+          color: Color(0xFF1A3D7C),
+          letterSpacing: 2,
+        ),
+        decoration: const InputDecoration(
+          border: InputBorder.none,
+          counterText: '',
+          contentPadding: EdgeInsets.symmetric(vertical: 16),
+        ),
+        inputFormatters: [
+          FilteringTextInputFormatter.digitsOnly,
+        ],
+        onChanged: widget.onChanged,
+        onSubmitted: widget.onSubmitted,
+      ),
+    );
+  }
+}
+
+class _EmailSection extends StatelessWidget {
   const _EmailSection({
     required this.controller,
     required this.label,
@@ -637,44 +664,14 @@ class _EmailSection extends StatefulWidget {
   final VoidCallback onSendCode;
 
   @override
-  State<_EmailSection> createState() => _EmailSectionState();
-}
-
-class _EmailSectionState extends State<_EmailSection> {
-  final FocusNode _focusNode = FocusNode();
-  bool _hasInteracted = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _focusNode.addListener(_onFocusChanged);
-  }
-
-  void _onFocusChanged() {
-    if (_focusNode.hasFocus) _hideHint();
-  }
-
-  void _hideHint() {
-    if (_hasInteracted) return;
-    setState(() => _hasInteracted = true);
-  }
-
-  @override
-  void dispose() {
-    _focusNode.removeListener(_onFocusChanged);
-    _focusNode.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final bool canSend = widget.controller.text.trim().isNotEmpty;
+    final bool canSend = controller.text.trim().isNotEmpty;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          widget.label,
+          label,
           style: const TextStyle(
             fontWeight: FontWeight.w700,
             color: Color(0xFF2A4474),
@@ -682,48 +679,11 @@ class _EmailSectionState extends State<_EmailSection> {
         ),
         const SizedBox(height: 8),
         TextField(
-          controller: widget.controller,
-          focusNode: _focusNode,
+          controller: controller,
           keyboardType: TextInputType.emailAddress,
-          onTap: _hideHint,
-          onChanged: (_) => setState(() {}),
           decoration: InputDecoration(
-            hintText: _hasInteracted ? null : widget.hint,
-            prefixIcon: Icon(widget.icon, color: widget.color),
-            suffixIcon: widget.countdownSeconds <= 0
-                ? canSend
-                    ? IconButton(
-                        onPressed: widget.isSendingCode
-                            ? null
-                            : widget.onSendCode,
-                        icon: widget.isSendingCode
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.send_rounded, size: 20),
-                      )
-                    : const SizedBox.shrink()
-                : Container(
-                    margin: const EdgeInsets.only(right: 12),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: widget.color.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      '${widget.countdownSeconds}s',
-                      style: TextStyle(
-                        color: widget.color,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ),
+            hintText: hint,
+            prefixIcon: Icon(icon, color: color),
             filled: true,
             fillColor: Colors.white,
             contentPadding: const EdgeInsets.symmetric(
@@ -734,6 +694,75 @@ class _EmailSectionState extends State<_EmailSection> {
               borderRadius: BorderRadius.circular(18),
               borderSide: BorderSide.none,
             ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          height: 48,
+          child: ElevatedButton(
+            onPressed: (!canSend || isSendingCode || countdownSeconds > 0)
+                ? null
+                : onSendCode,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: canSend && countdownSeconds <= 0
+                  ? const Color(0xFF33B8FF)
+                  : const Color(0xFF33B8FF).withValues(alpha: 0.4),
+              foregroundColor: Colors.white,
+              disabledBackgroundColor: const Color(0xFF33B8FF).withValues(alpha: 0.2),
+              disabledForegroundColor: Colors.white.withValues(alpha: 0.7),
+              elevation: canSend && countdownSeconds <= 0 ? 4 : 0,
+              shadowColor: const Color(0xFF33B8FF).withValues(alpha: 0.4),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+            child: isSendingCode
+                ? const SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.5,
+                      color: Colors.white,
+                    ),
+                  )
+                : Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      if (countdownSeconds > 0) ...[
+                        const Icon(Icons.mail_outline_rounded, size: 18),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Resend in ${countdownSeconds}s',
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ] else
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              canSend
+                                  ? Icons.send_rounded
+                                  : Icons.email_outlined,
+                              size: 18,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              canSend
+                                  ? 'Send verification code'
+                                  : 'Enter email to send code',
+                              style: const TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                    ],
+                  ),
           ),
         ),
       ],

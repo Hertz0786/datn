@@ -3,6 +3,10 @@ const express = require('express');
 const Report = require('../models/Report');
 const Notification = require('../models/Notification');
 const User = require('../models/User');
+const Post = require('../models/Post');
+const Comment = require('../models/Comment');
+const Group = require('../models/Group');
+const Message = require('../models/Message');
 const asyncHandler = require('../utils/async-handler');
 const { requireAuth, requireRole } = require('../middlewares/auth');
 const { isValidObjectId } = require('../middlewares/object-id');
@@ -11,7 +15,6 @@ const {
   broadcastNotification,
   NOTIFICATION_TYPES,
 } = require('../services/notification-service');
-const { emitToUser } = require('../realtime/socket');
 
 const router = express.Router();
 
@@ -60,6 +63,171 @@ function normalizeReportTargetType(targetType) {
     return value;
   }
   return 'POST';
+}
+
+/**
+ * Fetch the raw content associated with a report's target so the
+ * admin panel can display it without a second round-trip.
+ *
+ * Returns null if the target was already deleted / not found.
+ */
+async function resolveTargetContent(targetType, targetId) {
+  if (!targetType || !targetId) {
+    return null;
+  }
+  try {
+    switch (String(targetType).toUpperCase()) {
+      case 'POST': {
+        const post = await Post.findById(targetId)
+          .select('author displayName username avatarUrl content mediaUrls status visibility reactions commentCount topics createdAt')
+          .lean();
+        if (!post) {
+          return null;
+        }
+        // Flatten author subdocument into top-level fields so the
+        // frontend TargetDetail component stays simple.
+        return {
+          kind: 'POST',
+          author: post.displayName || post.author?.displayName || post.author?.username || 'Unknown',
+          authorHandle: post.username || post.author?.username || '',
+          authorAvatarUrl: post.avatarUrl || post.author?.avatarUrl || '',
+          content: post.content || '',
+          mediaUrls: post.mediaUrls || [],
+          status: post.status || 'PUBLISHED',
+          audience: post.visibility || 'FRIENDS',
+          reactions: post.reactions || 0,
+          commentCount: post.commentCount || 0,
+          topics: post.topics || [],
+          createdAt: post.createdAt,
+        };
+      }
+      case 'COMMENT': {
+        const comment = await Comment.findById(targetId)
+          .select('author displayName username avatarUrl content postId createdAt')
+          .lean();
+        if (!comment) {
+          return null;
+        }
+        return {
+          kind: 'COMMENT',
+          author: comment.displayName || comment.author?.displayName || comment.author?.username || 'Unknown',
+          authorHandle: comment.username || comment.author?.username || '',
+          authorAvatarUrl: comment.avatarUrl || comment.author?.avatarUrl || '',
+          content: comment.content || '',
+          postId: comment.postId?.toString() || '',
+          createdAt: comment.createdAt,
+        };
+      }
+      case 'USER': {
+        const user = await User.findById(targetId)
+          .select('displayName username avatarUrl role age createdAt isActive')
+          .lean();
+        if (!user) {
+          return null;
+        }
+        return {
+          kind: 'USER',
+          displayName: user.displayName || '',
+          username: user.username || '',
+          avatarUrl: user.avatarUrl || '',
+          role: user.role || 'USER',
+          age: user.age || null,
+          moderationStatus: user.isActive === false ? 'SUSPENDED' : 'ACTIVE',
+          createdAt: user.createdAt,
+        };
+      }
+      case 'GROUP': {
+        const group = await Group.findById(targetId)
+          .select('name topic description memberCount createdAt')
+          .lean();
+        if (!group) {
+          return null;
+        }
+        return {
+          kind: 'GROUP',
+          name: group.name || '',
+          topic: group.topic || '',
+          description: group.description || '',
+          memberCount: group.memberCount || 0,
+          createdAt: group.createdAt,
+        };
+      }
+      case 'MESSAGE': {
+        const message = await Message.findById(targetId)
+          .select('senderId sender displayName username avatarUrl content createdAt')
+          .lean();
+        if (!message) {
+          return null;
+        }
+        return {
+          kind: 'MESSAGE',
+          author: message.displayName || message.sender?.displayName || message.sender?.username || 'Unknown',
+          authorHandle: message.username || message.sender?.username || '',
+          authorAvatarUrl: message.avatarUrl || message.sender?.avatarUrl || '',
+          content: message.content || '',
+          createdAt: message.createdAt,
+        };
+      }
+      default:
+        return null;
+    }
+  } catch {
+    // Target may have already been deleted — return null so the
+    // frontend renders the "no longer available" message.
+    return null;
+  }
+}
+
+/**
+ * Build a reporter / targetAuthor summary from a User document.
+ * Strips sensitive fields and returns only what's needed by the UI.
+ */
+function summarizeUser(userDoc) {
+  if (!userDoc) {
+    return null;
+  }
+  return {
+    id: userDoc._id?.toString() || userDoc.id || '',
+    displayName: userDoc.displayName || userDoc.username || 'Unknown',
+    username: userDoc.username || '',
+    avatarUrl: userDoc.avatarUrl || '',
+    role: userDoc.role || 'USER',
+  };
+}
+
+/**
+ * Enrich a single Report document with all resolved data needed
+ * by the admin panel so the frontend never has to guess or round-trip.
+ */
+async function enrichReport(report) {
+  const [reporter, targetAuthor, target] = await Promise.all([
+    report.reporterId
+      ? User.findById(report.reporterId).select('displayName username avatarUrl role').lean()
+      : null,
+    report.targetAuthorId
+      ? User.findById(report.targetAuthorId).select('displayName username avatarUrl role').lean()
+      : null,
+    resolveTargetContent(report.targetType, report.targetId),
+  ]);
+
+  return {
+    id: report._id.toString(),
+    source: report.source,
+    category: report.category,
+    urgency: report.urgency,
+    status: report.status,
+    details: report.details || '',
+    targetContent: report.targetContent || '',
+    targetType: report.targetType,
+    targetId: report.targetId,
+    targetAuthorId: report.targetAuthorId ? report.targetAuthorId.toString() : null,
+    reporterId: report.reporterId ? report.reporterId.toString() : null,
+    createdAt: report.createdAt,
+    updatedAt: report.updatedAt,
+    reporter: summarizeUser(reporter),
+    targetAuthor: summarizeUser(targetAuthor),
+    target,
+  };
 }
 
 router.get('/rules', (req, res) => {
@@ -150,6 +318,8 @@ router.get(
   }),
 );
 
+// ── Moderation endpoints ─────────────────────────────────────────────
+
 router.get(
   '/reports/moderation',
   requireAuth,
@@ -157,8 +327,36 @@ router.get(
   asyncHandler(async (req, res) => {
     const status = req.query.status ? String(req.query.status) : undefined;
     const query = status ? { status } : {};
-    const items = await Report.find(query).sort({ urgency: -1, createdAt: -1 });
-    return res.json({ items });
+
+    const reports = await Report.find(query)
+      .sort({ urgency: -1, createdAt: -1 })
+      .lean();
+
+    // Resolve all reports in parallel — MongoDB can serve them faster
+    // than sequential queries would.
+    const enriched = await Promise.all(reports.map(enrichReport));
+
+    return res.json({ items: enriched });
+  }),
+);
+
+router.get(
+  '/reports/:reportId',
+  requireAuth,
+  requireRole('MODERATOR', 'ADMIN'),
+  asyncHandler(async (req, res) => {
+    const { reportId } = req.params;
+
+    if (!isValidObjectId(reportId)) {
+      return res.status(400).json({ message: 'Invalid reportId.' });
+    }
+
+    const report = await Report.findById(reportId).lean();
+    if (!report) {
+      return res.status(404).json({ message: 'Report not found.' });
+    }
+
+    return res.json({ item: await enrichReport(report) });
   }),
 );
 

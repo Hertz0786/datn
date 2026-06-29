@@ -32,8 +32,12 @@ export const api = {
       body: JSON.stringify({ username, password }),
     }),
   getDashboard: () => request('/api/admin/dashboard'),
-  listReports: (status = '') =>
-    request(`/api/admin/reports${status && status !== 'ALL' ? `?status=${status}` : ''}`),
+  listReports: (status = '', sortMode = '') =>
+    request(`/api/admin/reports${status || sortMode ? '?' : ''}${
+      status && status !== 'ALL' ? `status=${status}&` : ''
+    }${sortMode ? `sort=${sortMode}` : ''}`),
+  getReport: (reportId) =>
+    request(`/api/admin/reports/${encodeURIComponent(reportId)}`),
   updateReport: (reportId, status) =>
     request(`/api/admin/reports/${reportId}`, {
       method: 'PATCH',
@@ -119,5 +123,6 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(body),
     }),
-  listAudit: () => request('/api/admin/audit'),
+  listAudit: (page = 1, limit = 20) =>
+    request(`/api/admin/audit?page=${page}&limit=${limit}`),
 };

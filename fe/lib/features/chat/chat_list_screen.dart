@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 
+import '../../app/scaffold_with_bottom_nav.dart';
 import '../../core/models/chat_message.dart';
 import '../../core/models/chat_summary.dart';
 import '../../core/models/public_user.dart';
 import '../../core/network/api_exception.dart';
 import '../../core/services/chats_api.dart';
 import '../../core/services/realtime_service.dart';
+import '../../core/session/auth_session.dart';
 import '../../core/utils/date_time_formatter.dart';
 import '../../shared/widgets/empty_state_view.dart';
 import '../../shared/widgets/loading_state_view.dart';
@@ -39,11 +41,13 @@ class _ChatListScreenState extends State<ChatListScreen> {
     _searchController.addListener(_handleSearchChanged);
     _scrollController.addListener(_onScroll);
     RealtimeService.instance.on('chat:message', _handleRealtimeMessage);
+    RealtimeService.instance.on('chat:read', _handleRealtimeRead);
   }
 
   @override
   void dispose() {
     RealtimeService.instance.off('chat:message', _handleRealtimeMessage);
+    RealtimeService.instance.off('chat:read', _handleRealtimeRead);
     _searchController
       ..removeListener(_handleSearchChanged)
       ..dispose();
@@ -51,6 +55,20 @@ class _ChatListScreenState extends State<ChatListScreen> {
       ..removeListener(_onScroll)
       ..dispose();
     super.dispose();
+  }
+
+  /// Fired by the backend right after it processes [markChatRead] (e.g.
+  /// from [ChatDetailScreen]'s auto-mark on open). Use it to flip the
+  /// unread badge on the matching conversation to zero immediately.
+  void _handleRealtimeRead(dynamic payload) {
+    if (payload is! Map) {
+      return;
+    }
+    final String chatId = (payload['chatId'] ?? '').toString();
+    if (chatId.isEmpty) {
+      return;
+    }
+    _clearUnread(chatId);
   }
 
   void _onScroll() {
@@ -163,6 +181,10 @@ class _ChatListScreenState extends State<ChatListScreen> {
       Map<String, dynamic>.from(rawMessage),
     );
 
+    final String myId =
+        (AuthSession.instance.user?['id'] ?? '').toString();
+    final bool fromOther = myId.isNotEmpty && message.senderId != myId;
+
     final int index = _chats.indexWhere(
       (ChatSummary chat) => chat.id == chatId,
     );
@@ -172,9 +194,15 @@ class _ChatListScreenState extends State<ChatListScreen> {
     }
 
     final List<ChatSummary> updated = List<ChatSummary>.from(_chats);
-    updated[index] = updated[index].copyWith(
+    final ChatSummary current = updated[index];
+    // Inbox messages arrive on every chat the user is a member of.
+    // A message authored by anyone else bumps the unread counter (unless
+    // the user is already viewing this chat, which clears it below).
+    final int nextUnread = current.unreadCount + (fromOther ? 1 : 0);
+    updated[index] = current.copyWith(
       lastMessage: message,
       updatedAt: message.createdAt ?? DateTime.now(),
+      unreadCount: nextUnread,
     );
     updated.sort((a, b) {
       final DateTime aTime =
@@ -188,6 +216,21 @@ class _ChatListScreenState extends State<ChatListScreen> {
       return;
     }
 
+    setState(() => _chats = updated);
+  }
+
+  /// Local helper called after the user returns from [ChatDetailScreen].
+  /// Server already cleared the unread marker via [markChatRead]; we mirror
+  /// that on the cached list so the badge disappears immediately.
+  void _clearUnread(String chatId) {
+    final int index = _chats.indexWhere(
+      (ChatSummary chat) => chat.id == chatId,
+    );
+    if (index == -1 || _chats[index].unreadCount == 0) {
+      return;
+    }
+    final List<ChatSummary> updated = List<ChatSummary>.from(_chats);
+    updated[index] = updated[index].copyWith(unreadCount: 0);
     setState(() => _chats = updated);
   }
 
@@ -218,6 +261,51 @@ class _ChatListScreenState extends State<ChatListScreen> {
           username.contains(query) ||
           message.contains(query);
     }).toList();
+  }
+
+  Future<void> _showNewChatOptions(BuildContext context) async {
+    final String? result = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _NewChatOption(
+                  icon: Icons.chat_bubble_rounded,
+                  color: const Color(0xFF33B8FF),
+                  label: 'New Chat',
+                  subtitle: 'Message a friend privately',
+                  onTap: () => Navigator.pop(ctx, 'direct'),
+                ),
+                const SizedBox(height: 12),
+                _NewChatOption(
+                  icon: Icons.group_add_rounded,
+                  color: const Color(0xFF7A5CFF),
+                  label: 'New Group',
+                  subtitle: 'Create a group chat',
+                  onTap: () => Navigator.pop(ctx, 'group'),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (result == null || !mounted) return;
+    if (result == 'direct') {
+      _openNewChat();
+    } else if (result == 'group') {
+      await _openNewGroupChat();
+    }
   }
 
   void _openNewChat() {
@@ -251,15 +339,17 @@ class _ChatListScreenState extends State<ChatListScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => FriendProfileScreen(
-          userId: user.id,
-          name: user.displayName,
-          age: user.age,
-          favoriteTopic: user.favoriteTopics.isEmpty
-              ? 'Music'
-              : user.favoriteTopics.first,
-          avatarLabel: user.initials,
-          avatarUrl: user.avatarUrl,
+        builder: (_) => PushedScreenShell(
+          child: FriendProfileScreen(
+            userId: user.id,
+            name: user.displayName,
+            age: user.age,
+            favoriteTopic: user.favoriteTopics.isEmpty
+                ? 'Music'
+                : user.favoriteTopics.first,
+            avatarLabel: user.initials,
+            avatarUrl: user.avatarUrl,
+          ),
         ),
       ),
     );
@@ -285,7 +375,12 @@ class _ChatListScreenState extends State<ChatListScreen> {
           createdBy: chat.createdBy,
         ),
       ),
-    ).then((_) => _loadChats(showLoading: false));
+    ).then((_) {
+      // Server marks the conversation as read when the detail screen
+      // mounts; mirror that here so the inbox badge clears instantly.
+      _clearUnread(chat.id);
+      _loadChats(showLoading: false);
+    });
   }
 
   String _chatTitle(ChatSummary chat) {
@@ -336,20 +431,13 @@ class _ChatListScreenState extends State<ChatListScreen> {
             color: Color(0xFF1A3D7C),
           ),
         ),
-        actions: [
-          IconButton(
-            onPressed: _openNewGroupChat,
-            icon: const Icon(Icons.group_add_rounded),
-            tooltip: 'New group chat',
-            color: const Color(0xFF1A3D7C),
-          ),
-          IconButton(
-            onPressed: _openNewChat,
-            icon: const Icon(Icons.add_comment_rounded),
-            tooltip: 'New direct chat',
-            color: const Color(0xFF1A3D7C),
-          ),
-        ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => _showNewChatOptions(context),
+        backgroundColor: const Color(0xFF33B8FF),
+        foregroundColor: Colors.white,
+        elevation: 4,
+        child: const Icon(Icons.add_rounded, size: 28),
       ),
       body: RefreshIndicator(
         onRefresh: _loadChats,
@@ -516,12 +604,32 @@ class _ChatTile extends StatelessWidget {
               ? '${chat.memberCount} members'
               : 'No messages yet');
 
+    // Conversations with unread messages get a stronger title and preview
+    // so the user can spot them at a glance. Senders' own messages do not
+    // contribute to the unread count, so this naturally highlights chats
+    // where someone else has something to read.
+    final bool hasUnread = chat.hasUnread;
+    final Color previewColor =
+        hasUnread ? const Color(0xFF1A3D7C) : const Color(0xFF7A8BBF);
+    final FontWeight titleWeight =
+        hasUnread ? FontWeight.w900 : FontWeight.w700;
+    final FontWeight subtitleWeight =
+        hasUnread ? FontWeight.w800 : FontWeight.w500;
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: hasUnread
+            ? const Color(0xFFEFF7FF)
+            : Colors.white,
         borderRadius: BorderRadius.circular(18),
+        border: hasUnread
+            ? Border.all(
+                color: const Color(0xFF33B8FF).withValues(alpha: 0.45),
+                width: 1.5,
+              )
+            : null,
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.05),
@@ -552,9 +660,26 @@ class _ChatTile extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    title,
-                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontWeight: titleWeight,
+                            fontSize: 15,
+                            color: const Color(0xFF1A3D7C),
+                          ),
+                        ),
+                      ),
+                      if (hasUnread)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 6),
+                          child: _UnreadBadge(count: chat.unreadCount),
+                        ),
+                    ],
                   ),
                   if (chat.isSocialGroup) ...[
                     const SizedBox(height: 2),
@@ -575,18 +700,56 @@ class _ChatTile extends StatelessWidget {
                         : subtitle,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontWeight: subtitleWeight,
+                      color: previewColor,
+                    ),
                   ),
                 ],
               ),
             ),
           ),
+          const SizedBox(width: 8),
           Text(
             DateTimeFormatter.format(
               chat.lastMessage?.createdAt ?? chat.updatedAt,
             ),
-            style: const TextStyle(color: Color(0xFF9AA7C7)),
+            style: TextStyle(
+              color: hasUnread
+                  ? const Color(0xFF33B8FF)
+                  : const Color(0xFF9AA7C7),
+              fontWeight: hasUnread ? FontWeight.w800 : FontWeight.w500,
+            ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _UnreadBadge extends StatelessWidget {
+  const _UnreadBadge({required this.count});
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final String label = count > 99 ? '99+' : count.toString();
+    return Container(
+      constraints: const BoxConstraints(minWidth: 22, minHeight: 22),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFF4D67),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Center(
+        child: Text(
+          label,
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w900,
+            fontSize: 11,
+          ),
+        ),
       ),
     );
   }
@@ -640,5 +803,75 @@ class _GroupChatAvatar extends StatelessWidget {
     }
     return '${parts.first.substring(0, 1)}${parts.last.substring(0, 1)}'
         .toUpperCase();
+  }
+}
+
+class _NewChatOption extends StatelessWidget {
+  const _NewChatOption({
+    required this.icon,
+    required this.color,
+    required this.label,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String label;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: color.withValues(alpha: 0.2)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.15),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: color, size: 22),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 15,
+                      color: color,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF7A8BBF),
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right_rounded, color: color, size: 22),
+          ],
+        ),
+      ),
+    );
   }
 }

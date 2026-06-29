@@ -1,12 +1,35 @@
 import os
 import re
 import tempfile
+import subprocess
 from pathlib import Path
 from typing import Any
 
 import cv2
 import numpy as np
 import tensorflow as tf
+
+# Patch whisper.audio.load_audio to use bundled ffmpeg
+_ffmpeg_exe = (
+    Path(__file__).resolve().parent
+    / ".venv"
+    / "Lib"
+    / "site-packages"
+    / "imageio_ffmpeg"
+    / "binaries"
+    / "ffmpeg-win-x86_64-v7.1.exe"
+)
+if _ffmpeg_exe.exists():
+    _orig_run = subprocess.run
+
+    def _patched_run(cmd, *args, **kwargs):
+        if isinstance(cmd, list) and cmd and cmd[0] == "ffmpeg":
+            cmd = [str(_ffmpeg_exe)] + cmd[1:]
+        return _orig_run(cmd, *args, **kwargs)
+
+    import whisper.audio as _wa
+    _wa.run = _patched_run
+
 import whisper
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from PIL import Image, ImageOps
@@ -18,8 +41,8 @@ _logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parent
 MODEL_PATH = Path(os.getenv("AI_MODEL_PATH", BASE_DIR / "ai.h5"))
 IMAGE_SIZE = int(os.getenv("AI_IMAGE_SIZE", "224"))
-BLOCK_THRESHOLD = float(os.getenv("AI_BLOCK_THRESHOLD", "0.75"))
-REVIEW_THRESHOLD = float(os.getenv("AI_REVIEW_THRESHOLD", "0.55"))
+BLOCK_THRESHOLD = float(os.getenv("AI_BLOCK_THRESHOLD", "0.50"))
+REVIEW_THRESHOLD = float(os.getenv("AI_REVIEW_THRESHOLD", "0.35"))
 MAX_VIDEO_FRAMES = int(os.getenv("AI_MAX_VIDEO_FRAMES", "12"))
 MAX_FILE_MB = int(os.getenv("AI_MAX_FILE_MB", "80"))
 WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "base")
@@ -256,7 +279,7 @@ async def moderate_media(
 @app.post("/transcribe")
 async def transcribe_audio(
     file: UploadFile = File(...),
-    language: str | None = Form(default="vi"),
+    language: str | None = Form(default=None),
 ) -> dict[str, Any]:
     w_model = _require_whisper()
     content_type = (file.content_type or "").lower()
@@ -288,7 +311,7 @@ async def transcribe_audio(
         )
         return {
             "text": result.get("text", "").strip(),
-            "language": result.get("language", language or "vi"),
+            "language": result.get("language", language or "en"),
             "segments": [
                 {
                     "text": seg.get("text", "").strip(),
@@ -312,7 +335,7 @@ async def transcribe_audio(
 @app.post("/transcribe-moderate")
 async def transcribe_and_moderate(
     file: UploadFile = File(...),
-    language: str | None = Form(default="vi"),
+    language: str | None = Form(default=None),
     audio_only: bool = Form(default=False),
 ) -> dict[str, Any]:
     content_type = (file.content_type or "").lower()
@@ -340,7 +363,7 @@ async def transcribe_and_moderate(
         w_model = _require_whisper()
         transcribe_result = w_model.transcribe(
             tmp_path,
-            language=language if language else "vi",
+            language=language,  # None = auto-detect
             fp16=False,
         )
         transcribed_text = transcribe_result.get("text", "").strip()
@@ -349,7 +372,7 @@ async def transcribe_and_moderate(
 
         return {
             "text": transcribed_text,
-            "language": transcribe_result.get("language", language or "vi"),
+            "language": transcribe_result.get("language", language or "en"),
             "segments": [
                 {
                     "text": seg.get("text", "").strip(),
@@ -381,10 +404,38 @@ VIETNAMESE_KEYWORDS = [
     "ma túy", "drug", "cần sa", "heroin", "cocaine", "thuốc lắc", "mda",
     "rape", "hiếp", "xâm hại", "lạm dụng", "grooming",
 ]
+
+ENGLISH_KEYWORDS = [
+    "fuck", "f*ck", "fuk", "fck",
+    "shit", "sh*t", "sh1t",
+    "ass", "a*s", "azz",
+    "damn", "dmn", "dam",
+    "bitch", "b*tch", "b1tch", "bitxh",
+    "bastard", "basterd",
+    "piss", "p1ss",
+    "dick", "d*ck", "d1ck",
+    "cock", "c*ck",
+    "cunt", "c*nt",
+    "whore", "wh0re",
+    "slut", "sl*t",
+    "nigger", "nigga", "n*gger", "n1gger",
+    "retard", "ret*rded",
+    "faggot", "f*ggot", "fag",
+    "moron", "moro",
+    "idiot",
+    "suck", "sux",
+    "douche", "d0uche",
+    "crap", "cr*p",
+    "bullshit", "bullsh1t",
+    "bastard",
+]
+
+ALL_KEYWORDS = VIETNAMESE_KEYWORDS + ENGLISH_KEYWORDS
+
 # Pre-build a regex that matches each keyword as a whole word (word boundary),
 # so "ngu" does not match inside "language" or "bangu".
 _KEYWORD_PATTERN = re.compile(
-    r'(?<!\w)(' + '|'.join(re.escape(kw) for kw in VIETNAMESE_KEYWORDS) + r')(?!\w)',
+    r'(?<!\w)(' + '|'.join(re.escape(kw) for kw in ALL_KEYWORDS) + r')(?!\w)',
     re.IGNORECASE,
 )
 

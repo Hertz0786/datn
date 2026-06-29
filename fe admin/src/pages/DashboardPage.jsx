@@ -212,20 +212,52 @@ export default function DashboardPage({ onNavigate }) {
         <article className="panel">
           <div className="panel-header">
             <h2>Audit trail</h2>
-            <button onClick={() => onNavigate('audit')}>Open</button>
+            <button onClick={() => onNavigate('audit')}>View all</button>
           </div>
           <div className="stack">
-            {data.auditEvents.length === 0 && <p>No audit events.</p>}
-            {data.auditEvents.map((event) => (
-              <div className="timeline-item" key={event.id || event._id}>
-                <span>{new Date(event.createdAt).toLocaleString()}</span>
-                <strong className="audit-actor">{event.actorUsername || event.actorId || '—'}</strong>
-                <p className="audit-action">{event.action}</p>
-                {event.targetType && (
-                  <span className="audit-target">{event.targetType}/{event.targetId}</span>
-                )}
-              </div>
-            ))}
+            {data.auditEvents.length === 0 && <p className="muted">No audit events.</p>}
+            {data.auditEvents.map((event) => {
+              const actionLower = (event.action || '').toLowerCase();
+              const actionColor = actionLower.includes('delete') || actionLower.includes('ban') || actionLower.includes('remove') || actionLower.includes('block')
+                ? '#a01843'
+                : actionLower.includes('approve') || actionLower.includes('publish') || actionLower.includes('allow')
+                ? '#0a7550'
+                : '#21385f';
+              const icon = actionLower.includes('delete') || actionLower.includes('remove') ? '🗑'
+                : actionLower.includes('ban') || actionLower.includes('suspend') ? '⛔'
+                : actionLower.includes('hide') || actionLower.includes('block') ? '👁'
+                : actionLower.includes('approve') || actionLower.includes('publish') || actionLower.includes('allow') ? '✅'
+                : actionLower.includes('warn') ? '⚠'
+                : '📋';
+
+              return (
+                <div className="audit-dash-item" key={event.id || event._id}>
+                  <span className="audit-dash-icon">{icon}</span>
+                  <div className="audit-dash-content">
+                    <div className="audit-dash-top">
+                      <strong className="audit-actor">{event.actorUsername || event.actorId || '—'}</strong>
+                      <span className="audit-dash-time">
+                        {(() => {
+                          const d = new Date(event.createdAt);
+                          if (Number.isNaN(d.getTime())) return '';
+                          const diffMs = Date.now() - d.getTime();
+                          const minutes = Math.floor(diffMs / 60000);
+                          if (minutes < 1) return 'just now';
+                          if (minutes < 60) return `${minutes}m ago`;
+                          const hours = Math.floor(minutes / 60);
+                          if (hours < 24) return `${hours}h ago`;
+                          return `${Math.floor(hours / 24)}d ago`;
+                        })()}
+                      </span>
+                    </div>
+                    <p className="audit-action" style={{ color: actionColor }}>{event.action}</p>
+                    {event.targetType && (
+                      <span className="audit-target">{event.targetType}{event.targetId ? `/${event.targetId.slice(-8)}` : ''}</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </article>
       </div>

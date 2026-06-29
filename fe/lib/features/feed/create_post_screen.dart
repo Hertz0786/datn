@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import '../../app/app_shell_navigator.dart';
 import '../../core/models/feed_post.dart';
 import '../../core/models/media_asset.dart';
+import '../../core/models/trending_topic.dart';
 import '../../core/network/api_exception.dart';
 import '../../core/services/media_api.dart';
 import '../../core/services/posts_api.dart';
@@ -26,7 +27,6 @@ class CreatePostScreen extends StatefulWidget {
 class _CreatePostScreenState extends State<CreatePostScreen> {
   final ImagePicker _picker = ImagePicker();
   final TextEditingController _contentController = TextEditingController();
-  final TextEditingController _topicsController = TextEditingController();
   final List<XFile> _pickedImages = [];
   final List<XFile> _pickedVideos = [];
   // Tracks the moderation result for each uploaded media so the
@@ -43,10 +43,41 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   String _selectedMood = 'Happy';
   bool _isPosting = false;
 
+  List<TrendingTopic> _availableTopics = <TrendingTopic>[];
+  static const List<String> _fallbackTopics = <String>[
+    'Drawing',
+    'Science',
+    'Music',
+    'Coding',
+    'Sports',
+    'Story',
+    'Math',
+    'Reading',
+  ];
+
+  final Set<String> _selectedTopics = <String>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTopics();
+  }
+
+  Future<void> _loadTopics() async {
+    try {
+      final List<TrendingTopic> items =
+          await PostsApi.instance.trendingTopics(limit: 50);
+      if (mounted) {
+        setState(() => _availableTopics = items);
+      }
+    } catch (_) {
+      // Use fallback list on error
+    }
+  }
+
   @override
   void dispose() {
     _contentController.dispose();
-    _topicsController.dispose();
     super.dispose();
   }
 
@@ -258,7 +289,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     try {
       final created = await PostsApi.instance.createPostAndCheck(
         content: content,
-        topics: _parseTopics(_topicsController.text),
+        topics: _selectedTopics.toList(),
         mood: _selectedMood,
         mediaUrls: const <String>[],
         audience: widget.groupId != null
@@ -388,7 +419,6 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
   void _resetDraft() {
     _contentController.clear();
-    _topicsController.clear();
     void resetValues() {
       _pickedImages.clear();
       _pickedVideos.clear();
@@ -397,6 +427,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       _allowComments = true;
       _allowReactions = true;
       _selectedMood = 'Happy';
+      _selectedTopics.clear();
     }
 
     if (mounted) {
@@ -404,14 +435,6 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     } else {
       resetValues();
     }
-  }
-
-  List<String> _parseTopics(String raw) {
-    return raw
-        .split(',')
-        .map((String item) => item.trim())
-        .where((String item) => item.isNotEmpty)
-        .toList();
   }
 
   @override
@@ -479,17 +502,15 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                TextField(
-                  controller: _topicsController,
-                  decoration: InputDecoration(
-                    hintText: 'Topics, separated by commas: art, music',
-                    filled: true,
-                    fillColor: const Color(0xFFF6FAFF),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: BorderSide.none,
-                    ),
-                  ),
+                _TopicPickerButton(
+                  selectedTopics: _selectedTopics,
+                  availableTopics: _availableTopics,
+                  fallbackTopics: _fallbackTopics,
+                  onChanged: (topics) {
+                    setState(() => _selectedTopics
+                      ..clear()
+                      ..addAll(topics));
+                  },
                 ),
                 const SizedBox(height: 14),
                 Wrap(
@@ -1187,6 +1208,286 @@ class _SelectorTile extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _TopicPickerButton extends StatefulWidget {
+  const _TopicPickerButton({
+    required this.selectedTopics,
+    required this.availableTopics,
+    required this.fallbackTopics,
+    required this.onChanged,
+  });
+
+  final Set<String> selectedTopics;
+  final List<TrendingTopic> availableTopics;
+  final List<String> fallbackTopics;
+  final ValueChanged<Set<String>> onChanged;
+
+  @override
+  State<_TopicPickerButton> createState() => _TopicPickerButtonState();
+}
+
+class _TopicPickerButtonState extends State<_TopicPickerButton> {
+  final TextEditingController _searchController = TextEditingController();
+  final Set<String> _draftSelection = <String>{};
+  String _searchQuery = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _draftSelection.addAll(widget.selectedTopics);
+  }
+
+  @override
+  void didUpdateWidget(covariant _TopicPickerButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.selectedTopics != oldWidget.selectedTopics) {
+      _draftSelection.clear();
+      _draftSelection.addAll(widget.selectedTopics);
+    }
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  List<String> get _allTopicStrings {
+    if (widget.availableTopics.isNotEmpty) {
+      return widget.availableTopics.map((t) => t.topic).toList();
+    }
+    return widget.fallbackTopics;
+  }
+
+  List<String> get _filteredTopics {
+    final List<String> source = _allTopicStrings;
+    if (_searchQuery.isEmpty) {
+      return source;
+    }
+    return source
+        .where((t) => t.toLowerCase().contains(_searchQuery.toLowerCase()))
+        .toList();
+  }
+
+  void _openPicker() {
+    _draftSelection.clear();
+    _draftSelection.addAll(widget.selectedTopics);
+    _searchController.clear();
+    setState(() => _searchQuery = '');
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          return Container(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(context).size.height * 0.7,
+            ),
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 12),
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFD7E7FF),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          'Select Topic',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF1A3D7C),
+                          ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          widget.onChanged(Set<String>.from(_draftSelection));
+                          Navigator.pop(context);
+                        },
+                        child: const Text(
+                          'Done',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF33B8FF),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: TextField(
+                    controller: _searchController,
+                    onChanged: (value) {
+                      setSheetState(() => _searchQuery = value);
+                    },
+                    decoration: InputDecoration(
+                      hintText: 'Search topics...',
+                      prefixIcon: const Icon(Icons.search, color: Color(0xFF8FA4C7)),
+                      filled: true,
+                      fillColor: const Color(0xFFF6FAFF),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(16),
+                        borderSide: BorderSide.none,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 16),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                if (_draftSelection.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: _draftSelection.map((topic) {
+                        return Chip(
+                          label: Text(
+                            topic,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                            ),
+                          ),
+                          backgroundColor: const Color(0xFF33B8FF),
+                          deleteIcon: const Icon(Icons.close, size: 16, color: Colors.white),
+                          onDeleted: () {
+                            setSheetState(() => _draftSelection.remove(topic));
+                          },
+                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                if (_draftSelection.isNotEmpty) const SizedBox(height: 12),
+                Flexible(
+                  child: _filteredTopics.isEmpty
+                      ? const Center(
+                          child: Padding(
+                            padding: EdgeInsets.all(24),
+                            child: Text(
+                              'No topics found.',
+                              style: TextStyle(color: Color(0xFF8FA4C7)),
+                            ),
+                          ),
+                        )
+                      : ListView.builder(
+                          shrinkWrap: true,
+                          padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+                          itemCount: _filteredTopics.length,
+                          itemBuilder: (context, index) {
+                            final topic = _filteredTopics[index];
+                            final isSelected = _draftSelection.contains(topic);
+                            return ListTile(
+                              onTap: () {
+                                setSheetState(() {
+                                  if (isSelected) {
+                                    _draftSelection.remove(topic);
+                                  } else {
+                                    _draftSelection.add(topic);
+                                  }
+                                });
+                              },
+                              leading: Icon(
+                                isSelected
+                                    ? Icons.check_circle
+                                    : Icons.circle_outlined,
+                                color: isSelected
+                                    ? const Color(0xFF33B8FF)
+                                    : const Color(0xFFD7E7FF),
+                              ),
+                              title: Text(
+                                topic,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  color: isSelected
+                                      ? const Color(0xFF33B8FF)
+                                      : const Color(0xFF1A3D7C),
+                                ),
+                              ),
+                              contentPadding: EdgeInsets.zero,
+                              visualDensity: VisualDensity.compact,
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: _openPicker,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF6FAFF),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFD7E7FF)),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.label_outline, color: Color(0xFF33B8FF)),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                widget.selectedTopics.isEmpty
+                    ? 'Select topic'
+                    : widget.selectedTopics.join(', '),
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: widget.selectedTopics.isEmpty
+                      ? const Color(0xFF8FA4C7)
+                      : const Color(0xFF1A3D7C),
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (widget.selectedTopics.isNotEmpty)
+              Text(
+                '${widget.selectedTopics.length}',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF33B8FF),
+                ),
+              ),
+            const SizedBox(width: 4),
+            const Icon(
+              Icons.keyboard_arrow_down,
+              color: Color(0xFF8FA4C7),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

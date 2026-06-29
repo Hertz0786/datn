@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../app/app_theme.dart';
+import '../../app/scaffold_with_bottom_nav.dart';
 import '../../core/models/chat_summary.dart';
 import '../../core/models/feed_post.dart';
 import '../../core/models/group_detail_data.dart';
@@ -332,13 +333,15 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => FriendProfileScreen(
-          userId: authorId,
-          name: name.isEmpty ? 'Friend' : name,
-          age: 0,
-          favoriteTopic: 'Music',
-          avatarLabel: name.isEmpty ? '?' : name.substring(0, 1).toUpperCase(),
-          avatarUrl: post.authorAvatarUrl,
+        builder: (_) => PushedScreenShell(
+          child: FriendProfileScreen(
+            userId: authorId,
+            name: name.isEmpty ? 'Friend' : name,
+            age: 0,
+            favoriteTopic: 'Music',
+            avatarLabel: name.isEmpty ? '?' : name.substring(0, 1).toUpperCase(),
+            avatarUrl: post.authorAvatarUrl,
+          ),
         ),
       ),
     );

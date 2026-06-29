@@ -53,5 +53,52 @@ router.patch(
   }),
 );
 
+router.delete(
+  '/:notificationId',
+  asyncHandler(async (req, res) => {
+    const { notificationId } = req.params;
+    if (!isValidObjectId(notificationId)) {
+      return res.status(400).json({ message: 'Invalid notificationId.' });
+    }
+
+    const result = await Notification.deleteOne({
+      _id: notificationId,
+      userId: req.user.id,
+    });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ message: 'Notification not found.' });
+    }
+
+    return res.json({ message: 'Notification deleted.' });
+  }),
+);
+
+router.delete(
+  '/',
+  asyncHandler(async (req, res) => {
+    const body = req.body ?? {};
+    const ids = body.ids;
+
+    if (Array.isArray(ids) && ids.length > 0) {
+      const validIds = ids.filter((id) => isValidObjectId(id));
+      if (validIds.length === 0) {
+        return res.status(400).json({ message: 'No valid ids provided.' });
+      }
+      await Notification.deleteMany({
+        _id: { $in: validIds },
+        userId: req.user.id,
+      });
+      return res.json({
+        message: `${validIds.length} notifications deleted.`,
+        deletedCount: validIds.length,
+      });
+    }
+
+    await Notification.deleteMany({ userId: req.user.id });
+    return res.json({ message: 'All notifications deleted.' });
+  }),
+);
+
 module.exports = router;
 

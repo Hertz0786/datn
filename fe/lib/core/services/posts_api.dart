@@ -1,5 +1,6 @@
 import '../models/feed_post.dart';
 import '../models/public_user.dart';
+import '../models/trending_topic.dart';
 import '../network/api_client.dart';
 
 class PostLikeResult {
@@ -82,10 +83,6 @@ class PostsApi {
   final ApiClient _api = ApiClient.instance;
 
   static const int _defaultPageSize = 50;
-
-  Future<void> sharePost(String postId) async {
-    await _api.post('/api/posts/$postId/share');
-  }
 
   Future<FeedPage> feed({
     String? q,
@@ -315,6 +312,86 @@ class PostsApi {
     final List<FeedPost> items = (data['items'] as List<dynamic>? ?? const [])
         .whereType<Map<String, dynamic>>()
         .map(FeedPost.fromJson)
+        .toList();
+    return FeedPage(
+      items: items,
+      nextBefore: data['nextBefore']?.toString(),
+      hasMore: data['hasMore'] == true,
+    );
+  }
+
+  Future<FeedPage> userPosts(
+    String userId, {
+    int limit = _defaultPageSize,
+    String? before,
+  }) async {
+    final dynamic response = await _api.get(
+      '/api/posts/by-user/$userId',
+      query: <String, dynamic>{'limit': limit, 'before': before},
+    );
+    final Map<String, dynamic> data = _toMap(response);
+    final List<FeedPost> items = (data['items'] as List<dynamic>? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .map(FeedPost.fromJson)
+        .toList();
+    return FeedPage(
+      items: items,
+      nextBefore: data['nextBefore']?.toString(),
+      hasMore: data['hasMore'] == true,
+    );
+  }
+
+  Future<FeedPage> userBookmarks(
+    String userId, {
+    int limit = _defaultPageSize,
+    String? before,
+  }) async {
+    final dynamic response = await _api.get(
+      '/api/posts/bookmarks/$userId',
+      query: <String, dynamic>{'limit': limit, 'before': before},
+    );
+    final Map<String, dynamic> data = _toMap(response);
+    final List<FeedPost> items = (data['items'] as List<dynamic>? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .map(FeedPost.fromJson)
+        .toList();
+    return FeedPage(
+      items: items,
+      nextBefore: data['nextBefore']?.toString(),
+      hasMore: data['hasMore'] == true,
+    );
+  }
+
+  Future<List<TrendingTopic>> trendingTopics({int limit = 10}) async {
+    final dynamic response = await _api.get(
+      '/api/posts/topics/trending',
+      query: <String, dynamic>{'limit': limit},
+    );
+    final List<dynamic> items = response['topics'] as List<dynamic>? ?? [];
+    return items
+        .map((item) => TrendingTopic.fromJson(_toMap(item)))
+        .toList();
+  }
+
+  Future<FeedPage> feedByTopic(
+    String topic, {
+    int limit = 20,
+    String? before,
+  }) async {
+    final Map<String, dynamic> params = <String, dynamic>{
+      'limit': limit,
+    };
+    if (before != null) {
+      params['before'] = before;
+    }
+    final dynamic response = await _api.get(
+      '/api/posts/topics/${Uri.encodeComponent(topic)}/feed',
+      query: params,
+    );
+    final data = _toMap(response);
+    final List<dynamic> rawItems = data['items'] as List<dynamic>? ?? [];
+    final items = rawItems
+        .map((item) => FeedPost.fromJson(_toMap(item)))
         .toList();
     return FeedPage(
       items: items,

@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:google_sign_in/google_sign_in.dart';
 
 import '../../app/app_shell.dart';
-import '../../core/config/app_config.dart';
 import '../../core/network/api_exception.dart';
 import '../../core/services/auth_api.dart';
 import '../../core/constants/app_images.dart';
@@ -22,11 +20,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
   bool _isSubmitting = false;
 
-  final GoogleSignIn _googleSignIn = GoogleSignIn(
-    clientId: AppConfig.googleClientId.isNotEmpty ? AppConfig.googleClientId : null,
-    serverClientId: null,
-  );
-
   @override
   void dispose() {
     _usernameController.dispose();
@@ -39,9 +32,15 @@ class _LoginScreenState extends State<LoginScreen> {
     final String password = _passwordController.text;
 
     if (username.isEmpty || password.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter username and password.')),
-      );
+      _showError('Please enter both username and password.');
+      return;
+    }
+
+    // Sign-in is username-only: reject anything that contains '@' so we
+    // don't accidentally accept an email address. The backend enforces the
+    // same rule, but failing fast on the client gives immediate feedback.
+    if (username.contains('@')) {
+      _showError('Please sign in with your username, not your email.');
       return;
     }
 
@@ -63,18 +62,12 @@ class _LoginScreenState extends State<LoginScreen> {
       if (!mounted) {
         return;
       }
-
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error.message)));
+      _showError(_messageForLoginError(error));
     } catch (_) {
       if (!mounted) {
         return;
       }
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Login failed. Please try again.')),
-      );
+      _showError('Login failed. Please try again.');
     } finally {
       if (mounted) {
         setState(() => _isSubmitting = false);
@@ -82,61 +75,41 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  Future<void> _signInWithGoogle() async {
-    setState(() => _isSubmitting = true);
-
-    try {
-      final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
-
-      if (googleUser == null) {
-        if (mounted) {
-          setState(() => _isSubmitting = false);
+  /// Translates the backend's structured `code` (when available) into a
+  /// kid-friendly, parent-readable error message. Falls back to the raw
+  /// backend message when the code is unknown — never leak technical
+  /// details to children.
+  String _messageForLoginError(ApiException error) {
+    switch (error.code) {
+      case 'USER_NOT_FOUND':
+        return 'This account does not exist. Please check your username.';
+      case 'BAD_PASSWORD':
+        return 'Incorrect password. Please try again.';
+      case 'USERNAME_INVALID':
+        return 'Please sign in with your username, not your email.';
+      case 'ACCOUNT_INACTIVE':
+        return 'This account is inactive. Please contact support.';
+      case 'MISSING_CREDENTIALS':
+        return 'Please enter both username and password.';
+      default:
+        final String backendMessage = error.message.trim();
+        if (backendMessage.isEmpty) {
+          return 'Login failed. Please try again.';
         }
-        return;
-      }
-
-      final GoogleSignInAuthentication googleAuth =
-          await googleUser.authentication;
-
-      final String? idToken = googleAuth.idToken;
-      if (idToken == null) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Could not get Google ID token.')),
-          );
-          setState(() => _isSubmitting = false);
-        }
-        return;
-      }
-
-      await AuthApi.instance.googleLogin(idToken: idToken);
-
-      if (!mounted) {
-        return;
-      }
-
-      Navigator.pushAndRemoveUntil(
-        context,
-        MaterialPageRoute(builder: (_) => const AppShell()),
-        (_) => false,
-      );
-    } on ApiException catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
-      }
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Google sign-in failed: $error')),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isSubmitting = false);
-      }
+        return backendMessage;
     }
+  }
+
+  void _showError(String message) {
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red.shade400,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   @override
@@ -186,10 +159,12 @@ class _LoginScreenState extends State<LoginScreen> {
                 const SizedBox(height: 22),
                 _InputField(
                   controller: _usernameController,
-                  label: 'Username or Email',
-                  hint: 'kiddo_hero or email@example.com',
+                  label: 'Username',
+                  hint: 'kiddo_hero',
                   icon: Icons.badge_outlined,
                   color: primary,
+                  keyboardType: TextInputType.text,
+                  textInputAction: TextInputAction.next,
                 ),
                 const SizedBox(height: 14),
                 _InputField(
@@ -245,8 +220,6 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                         ),
                 ),
-                const SizedBox(height: 12),
-                _GoogleSignInButton(onPressed: _signInWithGoogle),
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
                   onPressed: _isSubmitting
@@ -321,51 +294,6 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 }
 
-class _GoogleSignInButton extends StatelessWidget {
-  const _GoogleSignInButton({required this.onPressed});
-
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return OutlinedButton(
-      onPressed: onPressed,
-      style: OutlinedButton.styleFrom(
-        foregroundColor: const Color(0xFF1A3D7C),
-        side: const BorderSide(color: Color(0xFFE0E0E0), width: 1.5),
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          SizedBox(
-            width: 20,
-            height: 20,
-            child: Image.network(
-              'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg',
-              errorBuilder: (_, _, _) => const Icon(
-                Icons.g_mobiledata,
-                size: 22,
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
-          const Text(
-            'Continue with Google',
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _InputField extends StatefulWidget {
   const _InputField({
     required this.controller,
@@ -374,6 +302,8 @@ class _InputField extends StatefulWidget {
     required this.icon,
     required this.color,
     this.obscure = false,
+    this.keyboardType,
+    this.textInputAction,
   });
 
   final TextEditingController controller;
@@ -382,6 +312,8 @@ class _InputField extends StatefulWidget {
   final IconData icon;
   final Color color;
   final bool obscure;
+  final TextInputType? keyboardType;
+  final TextInputAction? textInputAction;
 
   @override
   State<_InputField> createState() => _InputFieldState();
@@ -437,6 +369,9 @@ class _InputFieldState extends State<_InputField> {
           obscureText: widget.obscure,
           focusNode: _focusNode,
           onTap: _hideHint,
+          keyboardType: widget.keyboardType,
+          textInputAction: widget.textInputAction,
+          autocorrect: !widget.obscure,
           decoration: InputDecoration(
             hintText: _hasInteracted ? null : widget.hint,
             prefixIcon: Icon(widget.icon, color: widget.color),

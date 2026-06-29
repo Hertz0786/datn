@@ -32,6 +32,7 @@ const NOTIFICATION_TYPES = {
   POST_LIKED: 'POST_LIKED',
   POST_PENDING_MEDIA_REVIEW: 'POST_PENDING_MEDIA_REVIEW',
   POST_MODERATION_DECIDED: 'POST_MODERATION_DECIDED',
+  POST_SHARED: 'POST_SHARED',
 
   // Comment system
   COMMENT_CREATED: 'COMMENT_CREATED',
@@ -80,6 +81,7 @@ const NOTIFICATION_CATEGORY = {
   [NOTIFICATION_TYPES.POST_LIKED]: 'social',
   [NOTIFICATION_TYPES.POST_PENDING_MEDIA_REVIEW]: 'moderation',
   [NOTIFICATION_TYPES.POST_MODERATION_DECIDED]: 'moderation',
+  [NOTIFICATION_TYPES.POST_SHARED]: 'social',
   [NOTIFICATION_TYPES.COMMENT_CREATED]: 'social',
   [NOTIFICATION_TYPES.COMMENT_REPLIED]: 'social',
   [NOTIFICATION_TYPES.COMMENT_LIKED]: 'social',
@@ -280,6 +282,7 @@ async function sendNotification({
   payload = {},
   emitRealtime = true,
   skipSelf = true,
+  persist = true,
 }) {
   if (!userId || !type) {
     return null;
@@ -293,34 +296,48 @@ async function sendNotification({
     throw new Error(`Unknown notification type: ${type}`);
   }
 
-  const fallback = DEFAULT_COPY[type] || { title: 'Thông báo', body: '' };
-  const context = {
-    actor: (payload.actorName || payload.actorUsername || 'Ai đó'),
-    ...payload,
-  };
-  const finalTitle = title || renderTemplate(fallback.title, context);
-  const finalBody = body || renderTemplate(fallback.body, context);
-
   const enrichedPayload = {
     ...payload,
-    title: finalTitle,
-    body: finalBody,
     category: NOTIFICATION_CATEGORY[type] || 'system',
   };
 
-  const notification = await Notification.create({
-    userId,
-    type,
-    payload: enrichedPayload,
-  });
+  if (persist && type !== NOTIFICATION_TYPES.CHAT_MESSAGE) {
+    const fallback = DEFAULT_COPY[type] || { title: 'Thông báo', body: '' };
+    const context = {
+      actor: (payload.actorName || payload.actorUsername || 'Ai đó'),
+      ...payload,
+    };
+    enrichedPayload.title = title || renderTemplate(fallback.title, context);
+    enrichedPayload.body = body || renderTemplate(fallback.body, context);
+
+    const notification = await Notification.create({
+      userId,
+      type,
+      payload: enrichedPayload,
+    });
+
+    if (emitRealtime) {
+      emitToUser(userId.toString(), 'notification:created', {
+        notification: serializeNotification(notification),
+      });
+    }
+
+    return notification;
+  }
 
   if (emitRealtime) {
     emitToUser(userId.toString(), 'notification:created', {
-      notification: serializeNotification(notification),
+      notification: {
+        id: `realtime-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        type,
+        payload: enrichedPayload,
+        readAt: null,
+        createdAt: new Date(),
+      },
     });
   }
 
-  return notification;
+  return null;
 }
 
 /**
@@ -340,6 +357,7 @@ async function broadcastNotification({
   if (!Array.isArray(userIds) || userIds.length === 0) {
     return [];
   }
+  const shouldPersist = type !== NOTIFICATION_TYPES.CHAT_MESSAGE;
   const results = await Promise.all(
     userIds
       .filter((id) => !(skipSelf && actorId && id.toString() === actorId.toString()))
@@ -353,6 +371,7 @@ async function broadcastNotification({
           payload,
           emitRealtime,
           skipSelf: false, // we already filtered
+          persist: shouldPersist,
         }),
       ),
   );

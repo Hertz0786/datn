@@ -177,6 +177,22 @@ router.post(
       });
     }
 
+    await sendNotification({
+      userId: req.user.id,
+      actorId: req.user.id,
+      type: NOTIFICATION_TYPES.GROUP_CREATED,
+      payload: {
+        groupId: group._id.toString(),
+        groupName: group.name,
+        topic: group.topic,
+        ...(owner ? actorSnapshot(owner) : {}),
+        navigationTarget: {
+          route: 'GROUP_DETAIL',
+          groupId: group._id.toString(),
+        },
+      },
+    });
+
     return res.status(201).json({ message: 'Group created.', group });
   }),
 );

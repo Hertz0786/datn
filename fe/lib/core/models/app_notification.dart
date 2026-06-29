@@ -32,4 +32,20 @@ class AppNotification {
   }
 
   bool get isRead => readAt != null;
+
+  String get title {
+    final dynamic raw = payload['title'];
+    if (raw is String && raw.trim().isNotEmpty) {
+      return raw.trim();
+    }
+    return 'Notification';
+  }
+
+  String get body {
+    final dynamic raw = payload['body'];
+    if (raw is String && raw.trim().isNotEmpty) {
+      return raw.trim();
+    }
+    return '';
+  }
 }

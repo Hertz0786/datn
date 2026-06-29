@@ -24,6 +24,11 @@ const messageSchema = new mongoose.Schema(
       type: [String],
       default: [],
     },
+    voiceUrl: {
+      type: String,
+      default: '',
+      trim: true,
+    },
     type: {
       type: String,
       enum: ['TEXT', 'POST_SHARE', 'CALL'],

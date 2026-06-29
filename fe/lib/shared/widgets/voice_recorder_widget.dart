@@ -217,7 +217,7 @@ class _VoiceRecorderWidgetState extends State<VoiceRecorderWidget>
       animation: _pulseAnimation,
       builder: (context, child) {
         return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
           decoration: BoxDecoration(
             color: Colors.red.shade50,
             borderRadius: BorderRadius.circular(14),
@@ -229,46 +229,39 @@ class _VoiceRecorderWidgetState extends State<VoiceRecorderWidget>
               Transform.scale(
                 scale: _pulseAnimation.value,
                 child: Container(
-                  width: 10,
-                  height: 10,
-                  decoration: BoxDecoration(
+                  width: 8,
+                  height: 8,
+                  decoration: const BoxDecoration(
                     color: Colors.red,
                     shape: BoxShape.circle,
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               Text(
                 _formatDuration(_recordedSeconds),
                 style: const TextStyle(
                   fontWeight: FontWeight.w700,
                   color: Colors.red,
-                  fontSize: 14,
+                  fontSize: 13,
                 ),
               ),
-              const SizedBox(width: 8),
-              TextButton(
-                onPressed: _cancelRecording,
-                style: TextButton.styleFrom(
-                  foregroundColor: Colors.red.shade400,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  minimumSize: const Size(0, 28),
-                ),
-                child: const Text('Cancel'),
+              const SizedBox(width: 6),
+              GestureDetector(
+                onTap: _cancelRecording,
+                child: const Icon(Icons.close_rounded, color: Colors.red, size: 18),
               ),
               const SizedBox(width: 4),
-              ElevatedButton(
-                onPressed: _stopRecording,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.red,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                  minimumSize: const Size(0, 28),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+              GestureDetector(
+                onTap: _stopRecording,
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: const BoxDecoration(
+                    color: Colors.red,
+                    shape: BoxShape.circle,
                   ),
+                  child: const Icon(Icons.stop_rounded, color: Colors.white, size: 12),
                 ),
-                child: const Icon(Icons.stop_rounded, size: 16),
               ),
             ],
           ),
@@ -279,7 +272,7 @@ class _VoiceRecorderWidgetState extends State<VoiceRecorderWidget>
 
   Widget _buildRecordedView() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: const Color(0xFFEEF6FF),
         borderRadius: BorderRadius.circular(14),
@@ -291,46 +284,43 @@ class _VoiceRecorderWidgetState extends State<VoiceRecorderWidget>
           const Icon(
             Icons.check_circle_rounded,
             color: Color(0xFF33B8FF),
-            size: 18,
+            size: 16,
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           Text(
             '${_formatDuration(_recordedSeconds)} recorded',
             style: const TextStyle(
               fontWeight: FontWeight.w700,
               color: Color(0xFF1A3D7C),
-              fontSize: 14,
+              fontSize: 13,
             ),
           ),
-          const SizedBox(width: 8),
-          TextButton(
-            onPressed: _cancelRecording,
-            style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFF7A8BBF),
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              minimumSize: const Size(0, 28),
+          const SizedBox(width: 6),
+          GestureDetector(
+            onTap: _cancelRecording,
+            child: const Icon(
+              Icons.delete_outline_rounded,
+              color: Color(0xFF7A8BBF),
+              size: 18,
             ),
-            child: const Text('Discard'),
           ),
           const SizedBox(width: 4),
-          ElevatedButton(
-            onPressed: _confirmRecording,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF33B8FF),
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-              minimumSize: const Size(0, 28),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+          GestureDetector(
+            onTap: _confirmRecording,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xFF33B8FF),
+                borderRadius: BorderRadius.circular(10),
               ),
-            ),
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.send_rounded, size: 14),
-                SizedBox(width: 4),
-                Text('Send'),
-              ],
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.send_rounded, size: 12, color: Colors.white),
+                  SizedBox(width: 4),
+                  Text('Send', style: TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.w700)),
+                ],
+              ),
             ),
           ),
         ],
